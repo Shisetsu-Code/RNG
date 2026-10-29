@@ -5,7 +5,7 @@ mod windows_gui {
     use std::ffi::c_void;
     use std::fs::{self, File};
     use std::os::windows::process::CommandExt;
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
     use std::process::{Child, Command, Stdio};
     use std::ptr;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -79,6 +79,7 @@ mod windows_gui {
         fn SendMessageW(window: Handle, message: u32, wparam: usize, lparam: isize) -> isize;
         fn EnableWindow(window: Handle, enabled: i32) -> i32;
         fn MessageBoxW(parent: Handle, message: *const u16, caption: *const u16, flags: u32) -> i32;
+        fn LoadCursorW(instance: Handle, name: *const u16) -> Handle;
     }
 
     #[link(name = "kernel32")]
@@ -459,7 +460,7 @@ mod windows_gui {
             window_extra: 0,
             instance,
             icon: ptr::null_mut(),
-            cursor: ptr::null_mut(),
+            cursor: unsafe { LoadCursorW(ptr::null_mut(), 32512_usize as *const u16) }, // IDC_ARROW
             background: as_handle(6), // COLOR_WINDOW + 1
             menu_name: ptr::null(),
             class_name: class_name.as_ptr(),
@@ -620,7 +621,7 @@ mod windows_gui {
                 return Err("no se crearon todos los controles".to_owned());
             }
             let output = std::env::temp_dir().join(format!(
-                "rng-native-gui-smoke-{}",
+                "rng native gui smoke {}",
                 std::process::id()
             ));
             write_text(ui.packages.load(Ordering::SeqCst), "3");
