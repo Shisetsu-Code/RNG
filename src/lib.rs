@@ -255,9 +255,7 @@ mod tests {
             [(2, 24), (3, 64), (4, 160), (5, 400), (6, 925)];
         for (matches, prize) in expected {
             let mut grid = losing_grid();
-            for position in 0..matches {
-                grid[0][position] = 1;
-            }
+            grid[0][..matches].fill(1);
             if matches < COLS {
                 grid[0][matches] = 2;
             }
