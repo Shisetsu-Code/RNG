@@ -1,0 +1,14 @@
+[package]
+name = "rng-grid"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Provably calibrated 6x6 RNG simulation with 128 independent wallet balances"
+publish = false
+
+[dependencies]
+rand = { version = "=0.10.3", features = ["unbiased"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
