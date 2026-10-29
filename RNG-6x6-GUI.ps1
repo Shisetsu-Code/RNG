@@ -254,4 +254,9 @@ $form.Add_FormClosing({
         $script:process = $null
     }
 })
+if ($env:RNG_GUI_TEST_FORM -eq '1') {
+    Write-Output 'GUI_FORM_CREATED_OK'
+    $form.Dispose()
+    exit 0
+}
 [void][System.Windows.Forms.Application]::Run($form)
