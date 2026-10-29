@@ -117,14 +117,14 @@ impl GpuAnalyzer {
         );
         let ids_buffer = self.device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
-                label: Some("8192 outcome type ID traces"),
+                label: Some("128000 outcome type ID traces"),
                 contents: &ids_bytes,
                 usage: wgpu::BufferUsages::STORAGE,
             },
         );
         let payout_buffer = self.device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
-                label: Some("8192 outcome paytable"),
+                label: Some("128000 outcome paytable"),
                 contents: &rewards_bytes,
                 usage: wgpu::BufferUsages::STORAGE,
             },
