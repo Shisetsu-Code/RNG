@@ -59,6 +59,15 @@ impl Config {
     }
 }
 
+/// Como repartir la cantidad solicitada de apuestas entre los 128 saldos.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BetCount {
+    /// Total global, repartido lo mas uniformemente posible entre las carteras.
+    Total(usize),
+    /// Limite de apuestas individual para cada una de las 128 carteras.
+    PerWallet(usize),
+}
+
 #[derive(Debug, Clone)]
 pub struct WalletReport {
     pub wallet_id: usize,
@@ -167,7 +176,25 @@ pub fn simulate<R: Rng + ?Sized>(
     config: Config,
     rng: &mut R,
 ) -> Result<Simulation, &'static str> {
+    simulate_with_count(config, BetCount::PerWallet(config.spins_per_wallet), rng)
+}
+
+/// La cantidad TOTAL se reparte entre las 128 carteras: las primeras
+/// (total % 128) reciben una apuesta adicional.
+/// Si una cartera queda sin fondos, sus apuestas pendientes no se trasladan
+/// a otra cartera; el numero efectivamente jugado puede ser menor.
+pub fn simulate_with_count<R: Rng + ?Sized>(
+    config: Config,
+    count: BetCount,
+    rng: &mut R,
+) -> Result<Simulation, &'static str> {
     config.validate()?;
+    let requested_bets = match count {
+        BetCount::Total(n) | BetCount::PerWallet(n) => n,
+    };
+    if requested_bets == 0 {
+        return Err("la cantidad de apuestas debe ser mayor que cero");
+    }
 
     let bet = u128::from(config.bet);
     let mut wallets = Vec::with_capacity(WALLETS);
@@ -186,7 +213,11 @@ pub fn simulate<R: Rng + ?Sized>(
             total_prize: 0,
         };
 
-        for _ in 0..config.spins_per_wallet {
+        let requested_for_wallet = match count {
+            BetCount::PerWallet(n) => n,
+            BetCount::Total(n) => n / WALLETS + usize::from(index < n % WALLETS),
+        };
+        for _ in 0..requested_for_wallet {
             if wallet.closing_balance < bet {
                 break;
             }
@@ -312,6 +343,58 @@ mod tests {
                 wallet.opening_balance - wallet.total_bet + wallet.total_prize
             );
         }
+    }
+
+    #[test]
+    fn total_count_is_split_across_wallets_without_exceeding_request() {
+        let mut rng = rand::rng();
+        let config = Config {
+            spins_per_wallet: 1,
+            bet: 48,
+            base_balance: 1_000_000,
+            balance_step: 1,
+        };
+        let result = simulate_with_count(config, BetCount::Total(257), &mut rng).unwrap();
+        assert_eq!(result.wallets.len(), WALLETS);
+        assert_eq!(result.total_spins, 257);
+        assert_eq!(result.wallets[0].spins, 3);
+        assert!(result.wallets[1..].iter().all(|wallet| wallet.spins == 2));
+
+        let result = simulate_with_count(config, BetCount::Total(1), &mut rng).unwrap();
+        assert_eq!(result.total_spins, 1);
+        assert_eq!(result.wallets[0].spins, 1);
+        assert!(result.wallets[1..].iter().all(|wallet| wallet.spins == 0));
+    }
+
+    #[test]
+    fn per_wallet_count_is_preserved() {
+        let mut rng = rand::rng();
+        let config = Config {
+            spins_per_wallet: 5,
+            bet: 48,
+            base_balance: 1_000_000,
+            balance_step: 1,
+        };
+        let result = simulate_with_count(config, BetCount::PerWallet(3), &mut rng).unwrap();
+        assert_eq!(result.total_spins, WALLETS * 3);
+        assert!(result.wallets.iter().all(|wallet| wallet.spins == 3));
+        assert!(simulate_with_count(config, BetCount::Total(0), &mut rng).is_err());
+    }
+
+    #[test]
+    fn total_count_stops_if_wallet_is_unfunded() {
+        let mut rng = rand::rng();
+        let config = Config {
+            spins_per_wallet: 1,
+            bet: 48,
+            base_balance: 0,
+            balance_step: 1,
+        };
+        let result = simulate_with_count(config, BetCount::Total(128), &mut rng).unwrap();
+        assert_eq!(result.total_spins, 80);
+        assert_eq!(result.wallets[0].spins, 0);
+        assert_eq!(result.wallets[47].spins, 0);
+        assert_eq!(result.wallets[48].spins, 1);
     }
 
     #[test]
