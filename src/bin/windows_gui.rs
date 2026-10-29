@@ -11,7 +11,7 @@ mod windows_gui {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Mutex, OnceLock};
     use std::thread;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     type Handle = *mut c_void;
 
@@ -602,29 +602,97 @@ mod windows_gui {
         Ok(())
     }
 
+    /// Test complete startup and the same generation path used by the GUI button.
+    /// Runs without opening an interactive desktop window, for GitHub Actions.
     fn self_test() -> Result<(), String> {
         let directory = executable_directory()?;
         if !directory.join("RNG-6x6-CLI.exe").is_file() {
             return Err("falta RNG-6x6-CLI.exe junto al ejecutable de la GUI".to_owned());
         }
         let window = create_window()?;
-        if state().packages.load(Ordering::SeqCst) == 0
-            || state().directory.load(Ordering::SeqCst) == 0
-            || state().run_button.load(Ordering::SeqCst) == 0
-        {
-            return Err("no se crearon todos los controles".to_owned());
-        }
-        // SAFETY: the window is created by create_window() on this same thread.
+        let ui = state();
+
+        let result = (|| {
+            if ui.packages.load(Ordering::SeqCst) == 0
+                || ui.directory.load(Ordering::SeqCst) == 0
+                || ui.run_button.load(Ordering::SeqCst) == 0
+            {
+                return Err("no se crearon todos los controles".to_owned());
+            }
+            let output = std::env::temp_dir().join(format!(
+                "rng-native-gui-smoke-{}",
+                std::process::id()
+            ));
+            write_text(ui.packages.load(Ordering::SeqCst), "3");
+            write_text(
+                ui.directory.load(Ordering::SeqCst),
+                &output.display().to_string(),
+            );
+
+            // Exercise the exact path invoked when the user presses GENERAR PAQUETES.
+            start_generation(window)?;
+            let deadline = Instant::now() + Duration::from_secs(40);
+            let result = loop {
+                if let Some(completion) = ui
+                    .completion
+                    .lock()
+                    .map_err(|error| error.to_string())?
+                    .take()
+                {
+                    break completion;
+                }
+                if Instant::now() >= deadline {
+                    cancel_generation();
+                    return Err("La generacion de tres paquetes no finalizo".to_owned());
+                }
+                thread::sleep(Duration::from_millis(100));
+            };
+            if !result.ok {
+                return Err(format!("La GUI no pudo completar la generacion:\n{}", result.text));
+            }
+            let catalog_path = output.join("catalogo_128.json");
+            let catalog: rng_grid::Catalog = serde_json::from_slice(
+                &fs::read(&catalog_path)
+                    .map_err(|error| format!("Falta el catalogo de resultados: {error}"))?,
+            )
+            .map_err(|error| error.to_string())?;
+            rng_grid::validate_catalog(&catalog)?;
+            let packages = fs::read_to_string(output.join("paquetes.jsonl"))
+                .map_err(|error| format!("Falta paquetes.jsonl: {error}"))?;
+            let lines: Vec<&str> = packages.lines().collect();
+            if lines.len() != 3 {
+                return Err(format!("La GUI genero {} paquetes en lugar de 3", lines.len()));
+            }
+            for line in lines {
+                let entry: serde_json::Value =
+                    serde_json::from_str(line).map_err(|error| error.to_string())?;
+                let bets = entry["bets"]
+                    .as_array()
+                    .ok_or("Falta lista completa de apuestas")?;
+                let distinct: std::collections::HashSet<u64> =
+                    bets.iter().filter_map(|bet| bet["id"].as_u64()).collect();
+                if bets.len() != 100 || distinct.len() != 100 {
+                    return Err("Un paquete no tiene 100 tipos distintos".to_owned());
+                }
+            }
+            fs::remove_dir_all(output)
+                .map_err(|error| format!("No se pudo limpiar prueba: {error}"))?;
+            Ok(())
+        })();
+
+        // SAFETY: this window was created on this thread and owns the controls above.
         unsafe {
             DestroyWindow(window);
         }
-        Ok(())
+        result
     }
 
     pub fn run() {
         if std::env::args().any(|arg| arg == "--self-test") {
             if let Err(error) = self_test() {
-                message_box(ptr::null_mut(), &error, true);
+                let path = std::env::temp_dir().join("rng-gui-self-test-error.txt");
+                let _ = fs::write(&path, &error);
+                eprintln!("{error}");
                 std::process::exit(1);
             }
             return;
