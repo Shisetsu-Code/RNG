@@ -26,7 +26,13 @@ if not "%MODE%"=="independent" (
 )
 echo.
 echo Ejecutando auditoria...
-"%~dp0RNG-6x6-AUDITOR.exe" --packages %PAQUETES% --mode %MODE% --out "%~dp0auditoria_rng" %GPUFLAG%
+if exist "%~dp0salida_rng\catalogo_128.json" (
+  echo Usando el catalogo ACTUAL del generador de paquetes.
+  "%~dp0RNG-6x6-AUDITOR.exe" --packages %PAQUETES% --mode %MODE% --catalog "%~dp0salida_rng\catalogo_128.json" --out "%~dp0auditoria_rng" %GPUFLAG%
+) else (
+  echo No hay catalogo previo; se creara un catalogo de prueba.
+  "%~dp0RNG-6x6-AUDITOR.exe" --packages %PAQUETES% --mode %MODE% --out "%~dp0auditoria_rng" %GPUFLAG%
+)
 if errorlevel 1 (
   echo.
   echo La auditoria fallo. Si fue la GPU, repite el test en modo CPU.
