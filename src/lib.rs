@@ -6,6 +6,7 @@
 //! Ningun resultado ni probabilidad cambia en funcion de saldos o ganancias.
 
 pub mod audit;
+pub mod long_attack;
 
 use rand::seq::SliceRandom;
 use rand::{Rng, RngExt};
