@@ -1,7 +1,7 @@
 //! Laboratorio de seguridad, sin integracion con apuestas reales.
 //!
-//! Separa tres modelos: muestreo sin reemplazo (actual), independiente
-//! con reemplazo (referencia), y contador determinista inseguro (control).
+//! Separa tres modelos: independiente con reemplazo (actual), muestreo
+//! historico sin reemplazo y contador determinista inseguro (control).
 //! El adversario solo observa resultados PREVIOS, nunca el estado del RNG.
 //! Estos tests no constituyen certificacion criptografica.
 
@@ -72,7 +72,9 @@ pub struct ModeReport {
     pub duplicates_within_packages: u64,
     pub maximum_frequency_deviation_z: f64,
     pub checkpoints: Vec<CheckpointReport>,
+    /// Indica fuga matematica por excluir IDs previos, NO confirma ganancias.
     pub structural_exploit_detected: bool,
+    pub legacy_max_conditional_rtp_percent: Option<f64>,
     pub weak_rng_predictable: bool,
     pub observations: Vec<String>,
 }
@@ -270,6 +272,15 @@ pub fn audit<R: Rng + ?Sized>(
         && reports.iter().any(|report| {
             report.observed_prefix > 0 && report.possible_next_types < TYPES
         });
+    // Si en el peor caso todos los 99 sorteos observados pagaron 0,
+    // solo se redujo el denominador de 8192 a 8093. Con la tabla actual,
+    // es matematicamente imposible que el RTP condicional supere el 100%.
+    let legacy_max_conditional_rtp_percent = if mode == Mode::WithoutReplacement {
+        Some(100.0 * crate::RTP_TARGET_BPS as f64 * TYPES as f64
+            / (BASIS_POINTS as f64 * (TYPES - (BETS_PER_PACKAGE - 1)) as f64))
+    } else {
+        None
+    };
     let weak_predictable = mode == Mode::WeakCounter
         && reports
             .iter()
@@ -281,10 +292,12 @@ pub fn audit<R: Rng + ?Sized>(
     ];
     if mode == Mode::WithoutReplacement {
         observations.push(
-            "La eliminacion de tipos observados es informacion real, no un fallo de ChaCha. \
-             Si el jugador puede ver resultados pasados y escoger cuando apostar, \
-             el RTP condicional puede superar 100%."
-                .to_owned(),
+            format!(
+                "Existe informacion de descarte, pero con 8192 tipos y 100 sorteos \
+                 el RTP condicional maximo posible es {:.4}%: por debajo del 100%. \
+                 Esto no rompe ChaCha ni genera por si solo EV positivo.",
+                legacy_max_conditional_rtp_percent.unwrap_or(0.0)
+            ),
         );
     } else if mode == Mode::WithReplacement {
         observations.push(
@@ -318,6 +331,7 @@ pub fn audit<R: Rng + ?Sized>(
         maximum_frequency_deviation_z: max_frequency_z,
         checkpoints: reports,
         structural_exploit_detected: structural_exploit,
+        legacy_max_conditional_rtp_percent,
         weak_rng_predictable: weak_predictable,
         observations,
     })
@@ -351,12 +365,17 @@ mod tests {
         assert_eq!(report.checkpoints[0].possible_next_types, 8192);
         assert_eq!(report.checkpoints[5].possible_next_types, 8093);
         // Con 8192 tipos, observar 99 de ellos aporta poca informacion:
-        // puede no haber ventajas condicionales >100% en una muestra finita.
-        // La fuga existe matematicamente aunque no se observe EV positivo.
+        // el techo condicional es 97,68%, asi que no hay EV positivo.
+        // Aun existe una pequeña fuga de informacion acerca de los IDs.
         assert!(
             report.checkpoints[5].theoretical_elimination_percent
                 > report.checkpoints[5].theoretical_blind_percent
         );
+        let ceiling = report.legacy_max_conditional_rtp_percent.unwrap();
+        assert!(ceiling > 96.5 && ceiling < 100.0);
+        assert!((ceiling - 97.680464599).abs() < 0.001);
+        assert!(report.checkpoints.iter().all(|point|
+            point.conditional_positive_ev_opportunities == 0));
     }
 
     #[test]
