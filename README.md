@@ -1,147 +1,112 @@
-# RNG 6×6 — catálogo de 8.192 tipos, paquetes de 100
+# RNG 6×6 — 128.000 tipos y atacante de secuencias largas
 
-Proyecto Rust para Windows y terminal. Genera **8.192 matrices únicas de 6×6**, cada una con un premio calculado a partir de sus 36 símbolos, con **RTP teórico exacto de 96,5%**. Después produce tantos paquetes de **100 apuestas** como se solicite.
+Proyecto en Rust para generar **128.000 matrices únicas de 6×6**, cada una con un premio propio, y producir paquetes de **100 apuestas** con tipos repetidos permitidos.
 
-## Cambios en versión 0.3
+**RTP teórico exacto: 96,5%.** El resultado de cada apuesta se selecciona de manera independiente y uniforme entre los 128.000 tipos. No se compensan pérdidas ni se fuerzan frecuencias iguales; cada tipo vuelve a estar disponible en la próxima apuesta. Los identificadores son enteros de **32 bits**.
 
-- **8.192 tipos** (IDs 1..8192); antes había 128.
-- **Muestreo independiente con reposición**: cada una de las 100 apuestas selecciona un ID con probabilidad **1/8192**. Se permiten repeticiones dentro del mismo paquete y entre paquetes.
-- El RNG no impone cuotas, ciclos ni compensaciones de ganancias. Ni saldos anteriores ni paquetes consumidos cambian la distribución de la próxima apuesta.
-- **Reparto uniforme a largo plazo**: cada ID aparece, en promedio, `total_apuestas / 8192` veces. A corto plazo hay variación aleatoria, que el programa mide y exporta.
-- Los 128 tipos antiguos no se reutilizan automáticamente. El archivo compatible es ahora `catalogo_8192.json` y la versión del catálogo es 2.
-- El formato compacto (100 IDs por paquete, con sus 8.192 matrices en el catálogo) es ahora el predeterminado, para no duplicar grandes bloques de JSON.
+## Windows 11: ejecución
 
-**Ejemplo:** 100.000 paquetes generan 10.000.000 apuestas. La frecuencia esperada por tipo es 10.000.000 / 8192 ≈ **1.220,70** apariciones, pero los conteos individuales no serán exactamente iguales.
+1. Abre <https://github.com/Shisetsu-Code/RNG/actions/workflows/ci.yml> y selecciona la ejecución reciente que haya terminado con éxito.
+2. En **Artifacts**, descarga **RNG-6x6-128000-LONG-Windows-x64**.
+3. Extrae el ZIP completo.
+4. Abre **RNG-6x6.exe** para generar paquetes o **AUDITAR-RNG.cmd** para lanzar el atacante y configurar la longitud de observación.
 
-### Seguridad matemática
+No se requiere instalar Rust. La GUI es nativa de Windows y el motor está programado en Rust. Los resultados del generador se guardan en `salida_rng`.
 
-Cada apuesta sigue teniendo los 8.192 tipos disponibles, incluso después de observar 99 resultados del mismo paquete. Esto evita la fuga por descarte de tipos de la versión antigua sin reposición.
+## Generador
 
-Incluso en el modelo histórico sin reposición, con 8192 tipos y solo 100 extracciones, el RTP condicional máximo es 97,6805%, por debajo del 100%; el dato descartado sigue filtrando ligeramente información sobre IDs, pero no ofrece por sí solo una apuesta de valor esperado positivo. 
-
-No garantizamos 96,5% de retorno en cada paquete ni que todos los IDs aparezcan el mismo número de veces: hacerlo mediante cuotas adaptativas introduciría dependencias aprovechables. El RTP es **teórico**, no un objetivo que se fuerce con resultados futuros.
-
-## Descargar para Windows
-
-1. Abre [GitHub Actions](https://github.com/Shisetsu-Code/RNG/actions/workflows/ci.yml).
-2. Selecciona la última ejecución **exitosa** del flujo.
-3. En la sección **Artifacts**, descarga `RNG-6x6-Paquetes-Windows-x64`.
-4. Extrae el ZIP completo en una carpeta de Windows.
-5. Ejecuta `RNG-6x6.exe` para abrir la interfaz nativa Rust, elegir el número de paquetes y generar los resultados.
-
-También incluye `INICIAR-WINDOWS.cmd`, `DIAGNOSTICO-WINDOWS.cmd` y el laboratorio de ataque `AUDITAR-RNG.cmd`. No requiere instalar Rust ni PowerShell.
-
-## Uso directo en terminal
+Para 10.000 paquetes, que contienen un millón de apuestas:
 
 ```powershell
-.\RNG-6x6-CLI.exe --packages 100000 --out salida_rng --compact
+.\RNG-6x6-CLI.exe --packages 10000 --out salida_rng
 ```
 
-Para incluir las 36 celdas de cada apuesta en cada paquete, en lugar de solo el ID:
+El formato compacto es predeterminado: cada apuesta guarda el ID y el catálogo `catalogo_128000.json` contiene todas las matrices 6×6. Con `--full` se incluye la matriz en cada apuesta; con `--split-files` también se guarda un JSON individual por paquete.
+
+Reutilizar exactamente el mismo catálogo:
 
 ```powershell
-.\RNG-6x6-CLI.exe --packages 100 --out salida_completa --full
+.\RNG-6x6-CLI.exe --packages 10000 --reuse-catalog salida_rng\catalogo_128000.json --out salida_nueva
 ```
 
-Para reutilizar exactamente el mismo catálogo de tipos en otra generación:
+Archivos: `catalogo_128000.json`, `catalogo_128000.csv`, `paquetes.jsonl`, `resumen_paquetes.csv`, `frecuencias_tipos.csv`, `reporte.json`.
 
-```powershell
-.\RNG-6x6-CLI.exe --packages 10000 --reuse-catalog salida_rng\catalogo_8192.json --out otra_ejecucion
-```
+La versión del catálogo ahora es **3**. Los catálogos de 8.192 y 128 tipos anteriores no se pueden reutilizar directamente.
 
-Opciones:
+### Tabla de premios
 
-| Opción | Función |
-|---|---|
-| `--packages N` | Genera N paquetes de 100 apuestas |
-| `--out DIRECTORIO` | Carpeta de salida |
-| `--compact` | Guarda 100 IDs por paquete (predeterminado) |
-| `--full` | Incluye las matrices y premios completos en cada paquete |
-| `--split-files` | Además crea `paquetes/paquete_000001.json`, etc. |
-| `--reuse-catalog RUTA` | Reutiliza los 8.192 tipos de una ejecución previa |
+Se cuentan parejas de símbolos iguales horizontalmente adyacentes en una matriz 6×6. Las cuotas son:
 
-También se puede compilar desde el código fuente con `cargo run --release -- --packages 100000`.
-
-## Distribución de premios y RTP
-
-Cada matriz tiene seis filas y seis columnas. Cada celda es uno de cinco símbolos (0..4). Se cuentan las parejas horizontales adyacentes de símbolos iguales y se asigna el multiplicador correspondiente.
-
-| Parejas iguales | Tipos | Multiplicador |
+| Parejas iguales | Tipos | Pago |
 |---|---:|---:|
-| 0–3 | 4.096 | 0× |
-| 4 | 2.048 | 1× |
-| 5 | 1.024 | 1,5× |
-| 6 | 512 | 2× |
-| 7 | 64 | 3,52× |
-| 8 | 256 | 4× |
-| 9 | 128 | 8× |
-| 10 o más | 64 | 16× |
-| **Total** | **8.192** | **RTP 96,5%** |
+| 0–3 | 64.000 | 0× |
+| 4 | 32.000 | 1× |
+| 5 | 16.000 | 1,5× |
+| 6 | 8.000 | 2× |
+| 7 | 1.000 | 3,52× |
+| 8 | 4.000 | 4× |
+| 9 | 2.000 | 8× |
+| 10+ | 1.000 | 16× |
+| **Total** | **128.000** | **96,5% RTP** |
+
+El retorno agregado de los 128.000 tipos es **1.235.200.000 puntos básicos**:
 
 ```text
-Retorno esperado =
-(4096*0 + 2048*1 + 1024*1,5 + 512*2
- + 64*3,52 + 256*4 + 128*8 + 64*16) / 8192
-= 7905,28 / 8192
-= 0,965 = 96,5%
+RTP = 1.235.200.000 / (128.000 × 10.000) = 0,965
 ```
 
-Los pagos se representan en puntos básicos de enteros (`10000 = 1x`), sin error de precisión en la suma. La suma exacta de premios del catálogo es **79.052.800 puntos básicos**, equivalente a 8.192 × 9.650.
+Cada apuesta selecciona uno de estos tipos con probabilidad `1/128000`, independientemente de las apuestas previas. En un millón de apuestas se esperan **7,8125 apariciones por tipo**. La distribución de una muestra finita varía aleatoriamente y no se ajusta según el pasado.
 
-El generador valida que las 8.192 matrices sean únicas, que cada premio corresponda a la matriz y que los recuentos por multiplicador cumplan las cuotas definidas. Después, **cada ID participa con probabilidad idéntica e independiente**; no se seleccionan más resultados favorables o desfavorables a raíz de un saldo o de resultados anteriores.
+## Laboratorio: atacante de secuencias largas
 
-## Archivos de salida
+El atacante observa **resultados consecutivos, incluso al atravesar miles de paquetes**. Entrena con el primer **70%** de la secuencia, congela el modelo y lo evalúa con el **30% restante**, sin mirar resultados futuros. No tiene acceso a semillas ni al estado interno del CSPRNG.
 
-| Archivo | Contenido |
-|---|---|
-| `catalogo_8192.json` | Los 8.192 tipos, sus matrices 6×6 y pagos |
-| `catalogo_8192.csv` | El catálogo tabular, incluidas las seis filas de cada matriz |
-| `paquetes.jsonl` | Una línea JSON por paquete, con 100 IDs (repetidos permitidos) |
-| `resumen_paquetes.csv` | Los 100 giros, tipos únicos, tipos repetidos, RTP de cada paquete |
-| `frecuencias_tipos.csv` | Cuántas veces se utilizó cada ID |
-| `reporte.json` | RTP observado total y métricas de distribución |
-| `paquetes/paquete_000001.json` | Opcional con `--split-files` |
+Los tres modelos disponibles son `independent` (actual), `without` (histórico sin reposición) y `weak` (contador deliberadamente predecible, solo para pruebas).
 
-`reporte.json` incorpora `expected_occurrences_per_type`, `types_observed`, `minimum_occurrences_per_type`, `maximum_occurrences_per_type`, `maximum_frequency_deviation_z` y `duplicate_draws_within_packages`.
-
-La desviación típica de cada frecuencia bajo el modelo uniforme es:
-
-```text
-N = total de apuestas
-p = 1/8192
-media = N*p
-desviacion_estandar = sqrt(N*p*(1-p))
-```
-
-Para muestras pequeñas, que haya muchos tipos sin aparecer o frecuencias desiguales es normal.
-
-## Auditor de seguridad (generador contra atacante)
-
-Ejecuta `AUDITAR-RNG.cmd`, o desde terminal:
+Para atacar **un millón de resultados por modelo**:
 
 ```powershell
-.\RNG-6x6-AUDITOR.exe --packages 10000 --mode all --catalog salida_rng\catalogo_8192.json --out auditoria_rng
+.\RNG-6x6-AUDITOR.exe --mode all --packages 1000 --long-bets 1000000 --out auditoria_rng
 ```
 
-El auditor compara **tres modelos**:
-
-1. `independent`: **el generador actual** con reposición; mantiene 8.192 resultados posibles y RTP condicional de 96,5%.
-2. `without`: el **modelo anterior** sin reposición, como contrafactual para demostrar la fuga por descarte de tipos.
-3. `weak`: un contador deliberadamente inseguro, para comprobar si el atacante detecta predicción trivial.
-
-Se registran aciertos de predictores, anomalías de frecuencia, RTP observado y oportunidades de ventaja matemática.
-
-**GPU opcional**: utiliza `wgpu` (DirectX 12/Vulkan) para calcular el RTP condicional del modelo histórico sin reposición en lotes. El CSPRNG y los sorteos del generador **siguen en CPU**, por seguridad. Se compara la GPU con el cálculo CPU y se rechazan discrepancias.
+Para analizar **10 millones de resultados consecutivos del generador actual** sin pruebas cortas:
 
 ```powershell
-.\RNG-6x6-AUDITOR.exe --packages 100000 --mode without --gpu --out auditoria_gpu
+.\RNG-6x6-AUDITOR.exe --mode independent --long-only --long-bets 10000000 --out auditoria_10m
 ```
 
-La compilación y validación del shader no equivalen a probarlo en una tarjeta física; para medir rendimiento en una AMD RX 6800 XT hay que ejecutarlo localmente. Puede que para paquetes de 100 la CPU sea más rápida debido a la transferencia de datos.
+Para que el atacante lea **el mismo archivo JSONL generado previamente**, en lugar de generar otra secuencia:
 
-Los resultados del atacante se guardan en `auditoria.json` y `predicciones.csv`.
+```powershell
+.\RNG-6x6-AUDITOR.exe --mode independent --long-only --long-bets 1000000 --catalog salida_rng\catalogo_128000.json --observe-file salida_rng\paquetes.jsonl --out auditoria_real
+```
 
-## Pruebas
+El archivo debe contener al menos tantos resultados como se indiquen. Se aceptan paquetes compactos (IDs) y completos (matrices con ID). El lector recorre el archivo línea por línea sin retener millones de giros en RAM.
+
+**Qué intenta descubrir el atacante:**
+
+- ID más frecuente, repetición, incremento `+1`, último sucesor aprendido, y predicción por retardos de 100 o 1.000 giros.
+- Patrones del premio, correlaciones y modelos Markov de orden 1 y 2 sobre los ocho niveles de pago.
+- Autocorrelaciones en retardos de 1, 2, 8, 32, 100 y 1.000, coincidencias y límites entre paquetes.
+- Desviaciones de frecuencia y pruebas condicionales contra los valores esperados del modelo uniforme.
+
+Las pruebas usan evaluación fuera de muestra. Los aciertos extremadamente raros se contrastan mediante una cota binomial conservadora; un pequeño número de coincidencias no implica predictibilidad. Pasar los controles no certifica el RNG.
+
+**Informes generados:** `auditoria.json`, `secuencias_largas.json`, `secuencias_largas_predictores.csv`, `secuencias_largas_correlaciones.csv` y `predicciones.csv`.
+
+El menú `AUDITAR-RNG.cmd` permite escoger la cantidad de paquetes y la cantidad de resultados largos. Si existen `salida_rng/catalogo_128000.json` y `salida_rng/paquetes.jsonl`, también permite analizar la secuencia real guardada.
+
+## GPU
+
+El módulo opcional de `wgpu` usa DirectX 12/Vulkan para analizar retornos condicionales del **modelo histórico sin reposición**. El atacante de secuencias largas funciona en **CPU en streaming**. El RNG, la generación de resultados y las semillas criptográficas no se trasladan a la GPU.
+
+```powershell
+.\RNG-6x6-AUDITOR.exe --mode without --packages 100000 --long-bets 0 --gpu --out auditoria_gpu
+```
+
+Se valida el shader WGSL con Naga durante CI. El rendimiento con una GPU física debe comprobarse por separado.
+
+## Verificaciones
 
 ```bash
 cargo test --all-targets
@@ -149,6 +114,6 @@ cargo clippy --all-targets -- -D warnings
 cargo test --features gpu --bin rng_redteam
 ```
 
-GitHub Actions comprueba los 8.192 tipos únicos, el RTP, el muestreo con reposición, los contadores de distribución, los CSV/JSON, la interfaz Windows y la validación del shader WGSL.
+El CI comprueba el catálogo de 128.000 matrices, el RTP exacto, IDs de 32 bits, los 100 resultados por paquete, repeticiones permitidas, el ataque fuera de muestra y la creación de la GUI Windows.
 
-**Limitación:** esto es un simulador y banco de pruebas, no un RNG certificado para apuestas reales. Las pruebas estadísticas no prueban seguridad criptográfica; faltan auditoría independiente, seguridad del servidor, gestión de claves/semillas y certificaciones pertinentes.
+**Alcance:** simulador de seguridad; no equivale a una certificación criptográfica o de juegos de azar. Para operar con apuestas reales se requieren controles y auditoría independiente del servidor, semillas, transacciones, RNG y su integración.
