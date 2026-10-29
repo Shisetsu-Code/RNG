@@ -116,47 +116,29 @@ jobs:
             if ($package.outcome_ids.Count -ne 100) { throw "Package has a count different from 100" }
             if (@($package.outcome_ids | Select-Object -Unique).Count -ne 100) { throw "Repeated ID in same batch" }
           }
-      - name: Validate Windows Forms parser and form construction
-        shell: pwsh
-        run: |
-          Copy-Item target\release\rng-grid.exe .\RNG-6x6-CLI.exe
-          $tokens = $null
-          $errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile(
-            (Resolve-Path .\RNG-6x6-GUI.ps1).Path,
-            [ref]$tokens,
-            [ref]$errors
-          ) | Out-Null
-          if (@($errors).Count -ne 0) {
-            $errors | ForEach-Object { Write-Error $_.ToString() }
-            throw "Invalid GUI PowerShell syntax"
-          }
-          $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File .\RNG-6x6-GUI.ps1 -SelfTest
-          if ($LASTEXITCODE -ne 0 -or $output -notcontains 'GUI_SELF_TEST_OK') {
-            throw "GUI lightweight self-test failed: $output"
-          }
-          $stdoutPath = Join-Path $env:RUNNER_TEMP 'rng-ui-test-out.txt'
-          $stderrPath = Join-Path $env:RUNNER_TEMP 'rng-ui-test-err.txt'
-          $proc = Start-Process -FilePath powershell.exe -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-STA','-File','.\RNG-6x6-GUI.ps1','-TestForm') -WorkingDirectory $PWD.Path -WindowStyle Hidden -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -PassThru
-          if (-not $proc.WaitForExit(20000)) {
-            $proc.Kill()
-            throw "GUI form-construction self-test timed out"
-          }
-          $log = Get-Content $stdoutPath -Raw
-          $err = Get-Content $stderrPath -Raw
-          if ($proc.ExitCode -ne 0 -or $log -notmatch 'GUI_FORM_CREATED_OK') {
-            throw "GUI form construction failed: $log $err"
-          }
-      - name: Build Windows distributable ZIP folder
+      - name: Clippy for native Windows GUI
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Validate actual native GUI startup and generate button path
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Copy-Item target\release\windows_gui.exe dist\RNG-6x6.exe
           Copy-Item target\release\rng-grid.exe dist\RNG-6x6-CLI.exe
-          Copy-Item RNG-6x6-GUI.ps1 dist\RNG-6x6-GUI.ps1
+          & .\dist\RNG-6x6.exe --self-test
+          if ($LASTEXITCODE -ne 0) {
+            $log = Join-Path $env:TEMP 'rng-gui-self-test-error.txt'
+            if (Test-Path $log) { Get-Content $log }
+            throw "Native Rust GUI E2E test failed"
+          }
+          Write-Output "OK: native GUI controls and complete generation of 3 packages of 100"
+      - name: Build Windows distributable ZIP folder
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
           Copy-Item INICIAR-WINDOWS.cmd dist\INICIAR-WINDOWS.cmd
           Copy-Item DIAGNOSTICO-WINDOWS.cmd dist\DIAGNOSTICO-WINDOWS.cmd
           Copy-Item README.md dist\README.md
+          if (Test-Path dist\RNG-6x6-GUI.ps1) { throw "PowerShell dependency must not be shipped" }
           if ((Get-Item dist\RNG-6x6.exe).Length -lt 1024) { throw "Invalid launcher" }
           if ((Get-Item dist\RNG-6x6-CLI.exe).Length -lt 1024) { throw "Invalid CLI binary" }
       - name: Publish Windows portable ZIP
