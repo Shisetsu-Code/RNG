@@ -238,13 +238,13 @@ mod windows_gui {
             .stderr(Stdio::from(stderr))
             .creation_flags(CREATE_NO_WINDOW);
 
-        if is_checked(ui.compact.load(Ordering::SeqCst)) {
-            command.arg("--compact");
+        if !is_checked(ui.compact.load(Ordering::SeqCst)) {
+            command.arg("--full");
         }
         if is_checked(ui.split.load(Ordering::SeqCst)) {
             command.arg("--split-files");
         }
-        let catalog = directory.join("catalogo_128.json");
+        let catalog = directory.join("catalogo_8192.json");
         if is_checked(ui.reuse.load(Ordering::SeqCst)) && catalog.exists() {
             command.arg("--reuse-catalog").arg(&catalog);
         }
@@ -469,7 +469,7 @@ mod windows_gui {
         if unsafe { RegisterClassW(&class) } == 0 {
             return Err("No se puede registrar la ventana nativa en Windows".to_owned());
         }
-        let title = wide("RNG 6x6 - 128 tipos, paquetes de 100");
+        let title = wide("RNG 6x6 - 8192 tipos, paquetes de 100");
         // SAFETY: RegisterClassW has registered the named class above.
         let hwnd = unsafe {
             CreateWindowExW(
@@ -510,7 +510,7 @@ mod windows_gui {
         )?;
         create_child(
             window, instance, "STATIC",
-            "128 matrices | 100 apuestas por paquete | RTP teorico 96,5%",
+            "8192 matrices | 100 apuestas por paquete | RTP teorico 96,5%",
             0, [20, 52, 680, 25], 0,
         )?;
 
@@ -542,20 +542,22 @@ mod windows_gui {
         ui.directory.store(directory, Ordering::SeqCst);
 
         let reuse = create_child(
-            window, instance, "BUTTON", "Reutilizar catalogo de 128 tipos si existe",
+            window, instance, "BUTTON", "Reutilizar catalogo de 8192 tipos si existe",
             BS_AUTOCHECKBOX | WS_TABSTOP, [20, 272, 680, 27], 0,
         )?;
         ui.reuse.store(reuse, Ordering::SeqCst);
         unsafe {
             SendMessageW(as_handle(reuse), BM_SETCHECK, BST_CHECKED, 0);
         }
-        ui.compact.store(
-            create_child(
-                window, instance, "BUTTON", "Paquetes compactos (100 IDs por paquete)",
-                BS_AUTOCHECKBOX | WS_TABSTOP, [20, 304, 680, 27], 0,
-            )?,
-            Ordering::SeqCst,
-        );
+        let compact = create_child(
+            window, instance, "BUTTON", "Compacto: 100 IDs por paquete (permite repetidos)",
+            BS_AUTOCHECKBOX | WS_TABSTOP, [20, 304, 680, 27], 0,
+        )?;
+        ui.compact.store(compact, Ordering::SeqCst);
+        // El formato compacto es el recomendado para millones de apuestas.
+        unsafe {
+            SendMessageW(as_handle(compact), BM_SETCHECK, BST_CHECKED, 0);
+        }
         ui.split.store(
             create_child(
                 window, instance, "BUTTON", "Ademas, guardar un JSON individual por paquete",
@@ -592,7 +594,7 @@ mod windows_gui {
                 instance,
                 "EDIT",
                 "Ingresa la cantidad de paquetes y presiona GENERAR.\r\n\
-                 El catalogo de 128 tipos se guarda en catalogo_128.json.\r\n\
+                 El catalogo de 8192 tipos se guarda en catalogo_8192.json.\r\n\
                  Los paquetes de 100 se guardan en paquetes.jsonl.",
                 WS_BORDER | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL,
                 [20, 475, 685, 80],
@@ -651,7 +653,7 @@ mod windows_gui {
             if !result.ok {
                 return Err(format!("La GUI no pudo completar la generacion:\n{}", result.text));
             }
-            let catalog_path = output.join("catalogo_128.json");
+            let catalog_path = output.join("catalogo_8192.json");
             let catalog: rng_grid::Catalog = serde_json::from_slice(
                 &fs::read(&catalog_path)
                     .map_err(|error| format!("Falta el catalogo de resultados: {error}"))?,
@@ -667,13 +669,13 @@ mod windows_gui {
             for line in lines {
                 let entry: serde_json::Value =
                     serde_json::from_str(line).map_err(|error| error.to_string())?;
-                let bets = entry["bets"]
+                let ids = entry["outcome_ids"]
                     .as_array()
-                    .ok_or("Falta lista completa de apuestas")?;
-                let distinct: std::collections::HashSet<u64> =
-                    bets.iter().filter_map(|bet| bet["id"].as_u64()).collect();
-                if bets.len() != 100 || distinct.len() != 100 {
-                    return Err("Un paquete no tiene 100 tipos distintos".to_owned());
+                    .ok_or("Falta la lista de IDs del paquete")?;
+                if ids.len() != 100 || ids.iter().any(|value| {
+                    !matches!(value.as_u64(), Some(id) if (1..=8192).contains(&id))
+                }) {
+                    return Err("El paquete no contiene 100 IDs validos entre 1 y 8192".to_owned());
                 }
             }
             fs::remove_dir_all(output)
