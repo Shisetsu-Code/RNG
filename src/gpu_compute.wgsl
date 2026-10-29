@@ -1,6 +1,6 @@
 // wgpu WGSL: una invocacion analiza prefijos de un paquete de 100.
 // Solo analiza matrices ya sorteadas por CPU; no genera ninguna semilla.
-// El total del catalogo se precalcula en CPU (8192 premios).
+// El total del catalogo se precalcula en CPU (128000 premios).
 struct CatalogSettings {
     types: u32,
     payout_sum_bps: u32,
