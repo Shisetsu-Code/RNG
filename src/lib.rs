@@ -5,6 +5,8 @@
 //! El RTP de la distribucion es exactamente 9.650 puntos basicos (96,5%).
 //! Ningun resultado ni probabilidad cambia en funcion de saldos o ganancias.
 
+pub mod audit;
+
 use rand::seq::SliceRandom;
 use rand::{Rng, RngExt};
 use serde::{Deserialize, Serialize};
