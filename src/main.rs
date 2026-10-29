@@ -1,345 +1,359 @@
 use rng_grid::{
-    BetCount, Config, Simulation, WalletReport, exact_rtp, simulate_with_count,
+    BETS_PER_PACKAGE, BASIS_POINTS, Catalog, Outcome, Package, RTP_TARGET_BPS, TYPES,
+    generate_catalog, generate_package, theoretical_rtp_bps, validate_catalog,
 };
+use serde::Serialize;
+use serde_json::json;
 use std::env;
 use std::error::Error;
-use std::fs::File;
-use std::io::{self, BufWriter, IsTerminal, Write};
+use std::fs::{self, File};
+use std::io::{self, BufReader, BufWriter, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-fn usage() {
+#[derive(Debug)]
+struct Options {
+    packages: usize,
+    output: PathBuf,
+    reuse_catalog: Option<PathBuf>,
+    compact: bool,
+    split_files: bool,
+}
+
+#[derive(Serialize)]
+struct FullPackage<'a> {
+    package: usize,
+    bets: Vec<&'a Outcome>,
+    total_payout_bps: u64,
+}
+
+fn help() {
     println!(
-        "RNG 6x6 | 128 saldos | RTP teorico 96,5%\n\
+        "RNG 6x6 | 128 tipos de resultado | 100 apuestas por paquete | RTP 96,5%\n\
          \n\
-         Uso: RNG-6x6.exe (Windows: abre el menu interactivo)\n\
-              cargo run --release -- [opciones]\n\
-         --total-spins N     N apuestas EN TOTAL, repartidas entre 128 saldos\n\
-         --bets N            Alias de --total-spins\n\
-         --spins N           N apuestas POR SALDO (hasta 128 x N en total)\n\
-         --bet N             Importe por apuesta, multiplo de 48 (default: 48)\n\
-         --base-balance N    Saldo inicial del primero de los 128 (default: 1000000)\n\
-         --balance-step N    Incremento positivo entre saldos (default: 10000)\n\
-         --csv RUTA          Exporta el resultado de los 128 saldos a CSV\n\
-         --summary-only      Omite las 128 lineas de detalle de saldos\n\
-         --interactive       Abre el menu interactivo\n\
-         -h, --help          Muestra esta ayuda\n\
+         Uso: rng-grid.exe --packages N [opciones]\n\
+         --packages N          Cantidad de paquetes de 100 apuestas\n\
+         --out DIRECTORIO      Donde guardar resultados (default: salida_rng)\n\
+         --reuse-catalog JSON  Utilizar el catalogo previo de 128 matrices\n\
+         --compact             Guardar solo IDs en cada paquete (menos espacio)\n\
+         --split-files         Ademas, generar paquete_000001.json, etc.\n\
+         --help                Mostrar esta ayuda\n\
          \n\
-         Si no pasas parametros, aparece el menu interactivo.\n\
-         El saldo no altera el azar ni los premios, solo habilita apuestas."
+         Sin argumentos pregunta la cantidad de paquetes.\n\
+         Los paquetes se mezclan de forma independiente: 100 tipos diferentes\n\
+         dentro de cada paquete, elegidos uniformemente entre los 128.\n\
+         El RTP de 96,5% es matematico; NO se fuerza por paquete.\n\
+         No existen cuentas ni saldos en este programa."
     );
 }
 
-fn next_number<T>(
-    args: &mut impl Iterator<Item = String>,
-    option: &str,
-) -> Result<T, Box<dyn Error>>
-where
-    T: std::str::FromStr,
-    T::Err: Error + 'static,
-{
-    let value = args
-        .next()
-        .ok_or_else(|| format!("falta el valor de {option}"))?;
-    Ok(value.parse::<T>()?)
-}
-
-fn prompt_line(message: &str) -> Result<String, Box<dyn Error>> {
-    print!("{message}");
+fn prompt_packages() -> Result<usize, Box<dyn Error>> {
+    println!("==========================================");
+    println!(" RNG 6x6 | 128 tipos | RTP 96,5%");
+    println!(" 100 apuestas en cada paquete");
+    println!("==========================================");
+    print!("Cuantos paquetes de 100 apuestas queres generar? [100]: ");
     io::stdout().flush()?;
-    let mut line = String::new();
-    if io::stdin().read_line(&mut line)? == 0 {
-        return Err("no se recibio ninguna entrada".into());
+    let mut input = String::new();
+    if io::stdin().read_line(&mut input)? == 0 {
+        return Err("no se recibio la cantidad de paquetes".into());
     }
-    Ok(line.trim().to_string())
-}
-
-fn prompt_number<T>(description: &str, default: T, minimum: T) -> Result<T, Box<dyn Error>>
-where
-    T: std::fmt::Display + std::str::FromStr + Copy + PartialOrd,
-{
-    loop {
-        let value = prompt_line(&format!("{description} [{default}]: "))?;
-        let number = if value.is_empty() {
-            Some(default)
-        } else {
-            value.parse::<T>().ok()
-        };
-        match number {
-            Some(n) if n >= minimum => return Ok(n),
-            _ => println!("Valor invalido. Ingresa un entero mayor o igual a {minimum}."),
-        }
-    }
-}
-
-fn prompt_yes_no(description: &str, default: bool) -> Result<bool, Box<dyn Error>> {
-    let suffix = if default { "S/n" } else { "s/N" };
-    loop {
-        let input = prompt_line(&format!("{description} [{suffix}]: "))?;
-        match input.to_lowercase().as_str() {
-            "" => return Ok(default),
-            "s" | "si" | "sí" | "y" | "yes" => return Ok(true),
-            "n" | "no" => return Ok(false),
-            _ => println!("Ingresa S o N."),
-        }
-    }
-}
-
-fn interactive_config() -> Result<(Config, BetCount, Option<PathBuf>), Box<dyn Error>> {
-    println!("==============================================");
-    println!("  RNG 6x6 - Simulador de 128 saldos");
-    println!("  RTP teorico: 96,5%  |  Modo local");
-    println!("==============================================\n");
-
-    let n = prompt_number::<usize>("Cantidad de apuestas", 10_000, 1)?;
-    println!("\nComo repartir la cantidad?");
-    println!("  1) {} apuestas EN TOTAL, distribuidas entre 128 saldos", n);
-    println!("  2) {} apuestas PARA CADA SALDO (hasta {} en total)", n, (n as u128) * 128);
-    let mode = loop {
-        let input = prompt_line("Elegi una opcion [1]: ")?;
-        match input.as_str() {
-            "" | "1" => break BetCount::Total(n),
-            "2" => break BetCount::PerWallet(n),
-            _ => println!("Elegi 1 o 2."),
-        }
-    };
-
-    let bet = loop {
-        let candidate = prompt_number::<u64>(
-            "\nImporte por apuesta (unidades minimas, multiplo de 48)",
-            48,
-            48,
-        )?;
-        if candidate % 48 == 0 {
-            break candidate;
-        }
-        println!("El importe debe ser multiplo de 48.");
-    };
-    let base_balance = prompt_number::<u64>(
-        "Saldo inicial de la primera cartera",
-        1_000_000,
-        0,
-    )?;
-    let balance_step = prompt_number::<u64>(
-        "Incremento entre los 128 saldos iniciales",
-        10_000,
-        1,
-    )?;
-
-    let csv_path = if prompt_yes_no(
-        "Guardar los resultados en resultados.csv (junto al directorio de ejecucion)",
-        true,
-    )? {
-        Some(PathBuf::from("resultados.csv"))
+    let value = input.trim();
+    let count = if value.is_empty() {
+        100
     } else {
-        None
+        value.parse::<usize>()?
     };
-
-    println!();
-    Ok((
-        Config {
-            spins_per_wallet: n,
-            bet,
-            base_balance,
-            balance_step,
-        },
-        mode,
-        csv_path,
-    ))
-}
-
-fn observed_rtp(wagered: u128, returned: u128) -> f64 {
-    if wagered == 0 {
-        0.0
-    } else {
-        (returned as f64 / wagered as f64) * 100.0
+    if count == 0 {
+        return Err("la cantidad de paquetes debe ser mayor que cero".into());
     }
+    Ok(count)
 }
 
-fn save_csv(path: &Path, wallets: &[WalletReport]) -> Result<(), Box<dyn Error>> {
-    let mut out = BufWriter::new(File::create(path)?);
-    writeln!(
-        out,
-        "wallet_id,initial_balance,final_balance,spins,wagered,returned,observed_rtp_percent"
-    )?;
-    for wallet in wallets {
-        writeln!(
-            out,
-            "{},{},{},{},{},{},{:.5}",
-            wallet.wallet_id,
-            wallet.opening_balance,
-            wallet.closing_balance,
-            wallet.spins,
-            wallet.total_bet,
-            wallet.total_prize,
-            observed_rtp(wallet.total_bet, wallet.total_prize)
-        )?;
-    }
-    out.flush()?;
-    Ok(())
-}
-
-fn print_example(sim: &Simulation) {
-    if let Some(example) = sim.example_spin {
-        println!("\nEjemplo de matriz 6x6 (primer giro):");
-        for row in example.grid {
-            println!(
-                "  {}",
-                row.iter()
-                    .map(u8::to_string)
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            );
-        }
-        println!("Premio de cada una de las seis filas: {:?}", example.line_prizes);
-        println!("Premio total del giro: {} unidades minimas", example.total_prize);
-    } else {
-        println!("\nNo hubo giros: todos los saldos eran insuficientes.");
-    }
-}
-
-fn run() -> Result<(), Box<dyn Error>> {
-    let mut config = Config::default();
+fn parse_args() -> Result<(Options, bool), Box<dyn Error>> {
     let mut args = env::args().skip(1).peekable();
-    let mut csv_path: Option<PathBuf> = None;
-    let mut summary_only = false;
-    let mut count: Option<BetCount> = None;
-
-    if args.peek().is_none() || args.peek().is_some_and(|arg| arg == "--interactive") {
-        if args.peek().is_some() {
-            args.next();
-            if args.peek().is_some() {
-                return Err("--interactive no admite argumentos adicionales".into());
-            }
-        }
-        (config, count, csv_path) = {
-            let (c, mode, csv) = interactive_config()?;
-            (c, Some(mode), csv)
-        };
+    let interactive = args.peek().is_none();
+    let mut count = None;
+    let mut output = PathBuf::from("salida_rng");
+    let mut reuse_catalog = None;
+    let mut compact = false;
+    let mut split_files = false;
+    if interactive {
+        count = Some(prompt_packages()?);
     } else {
         while let Some(arg) = args.next() {
             match arg.as_str() {
                 "-h" | "--help" => {
-                    usage();
-                    return Ok(());
+                    help();
+                    return Ok((
+                        Options {
+                            packages: 0,
+                            output,
+                            reuse_catalog,
+                            compact,
+                            split_files,
+                        },
+                        false,
+                    ));
                 }
-                "--spins" => {
-                    let n = next_number(&mut args, &arg)?;
-                    if count.replace(BetCount::PerWallet(n)).is_some() {
-                        return Err("usa --spins O --total-spins, no ambos".into());
+                "--packages" | "--paquetes" => {
+                    if count.is_some() {
+                        return Err("solo se puede especificar --packages una vez".into());
                     }
-                    config.spins_per_wallet = n;
-                }
-                "--total-spins" | "--bets" => {
-                    let n = next_number(&mut args, &arg)?;
-                    if count.replace(BetCount::Total(n)).is_some() {
-                        return Err("especifica la cantidad de apuestas solo una vez".into());
-                    }
-                }
-                "--bet" => config.bet = next_number(&mut args, &arg)?,
-                "--base-balance" => config.base_balance = next_number(&mut args, &arg)?,
-                "--balance-step" => config.balance_step = next_number(&mut args, &arg)?,
-                "--csv" => {
-                    csv_path = Some(
+                    count = Some(
                         args.next()
-                            .ok_or_else(|| format!("falta la ruta para {arg}"))?
-                            .into(),
+                            .ok_or("falta un numero despues de --packages")?
+                            .parse::<usize>()?,
                     );
                 }
-                "--summary-only" => summary_only = true,
-                _ => return Err(format!("opcion desconocida: {arg}; usa --help").into()),
+                "--out" => {
+                    output = PathBuf::from(
+                        args.next().ok_or("falta directorio despues de --out")?,
+                    );
+                }
+                "--reuse-catalog" => {
+                    reuse_catalog = Some(PathBuf::from(
+                        args.next().ok_or("falta archivo despues de --reuse-catalog")?,
+                    ));
+                }
+                "--compact" => compact = true,
+                "--split-files" => split_files = true,
+                _ => {
+                    return Err(format!("opcion desconocida: {arg}; ejecuta --help").into());
+                }
             }
         }
     }
-
-    config.validate()?;
-    let count = count.unwrap_or(BetCount::PerWallet(config.spins_per_wallet));
-    let maximum_requested = match count {
-        BetCount::Total(n) => n,
-        BetCount::PerWallet(n) => n
-            .checked_mul(128)
-            .ok_or("se excedio el maximo de apuestas representable")?,
-    };
-
-    let (expected_num, expected_den) = exact_rtp();
-    if expected_num * 200 != expected_den * 193 {
-        return Err("la tabla de premios dejo de corresponder al RTP del 96,5%".into());
+    let packages = count.ok_or("indica --packages N")?;
+    if packages == 0 {
+        return Err("la cantidad de paquetes debe ser mayor que cero".into());
     }
+    Ok((
+        Options {
+            packages,
+            output,
+            reuse_catalog,
+            compact,
+            split_files,
+        },
+        interactive,
+    ))
+}
 
+fn write_catalog(catalog: &Catalog, output: &Path) -> Result<(), Box<dyn Error>> {
+    let file = BufWriter::new(File::create(output.join("catalogo_128.json"))?);
+    serde_json::to_writer_pretty(file, catalog)?;
+
+    let mut csv = BufWriter::new(File::create(output.join("catalogo_128.csv"))?);
+    writeln!(
+        csv,
+        "tipo_id,parejas_horizontales,retorno_bps,retorno_multiplicador,fila_1,fila_2,fila_3,fila_4,fila_5,fila_6"
+    )?;
+    for outcome in &catalog.outcomes {
+        let rows: Vec<String> = outcome
+            .grid
+            .iter()
+            .map(|row| {
+                row.iter()
+                    .map(u8::to_string)
+                    .collect::<Vec<_>>()
+                    .join("-")
+            })
+            .collect();
+        writeln!(
+            csv,
+            "{},{},{},{:.4},{}",
+            outcome.id,
+            outcome.matching_pairs,
+            outcome.payout_bps,
+            outcome.payout_bps as f64 / BASIS_POINTS as f64,
+            rows.join(",")
+        )?;
+    }
+    csv.flush()?;
+    Ok(())
+}
+
+fn encode_package<W: Write>(
+    writer: &mut W,
+    package: &Package,
+    catalog: &Catalog,
+    compact: bool,
+) -> Result<(), Box<dyn Error>> {
+    if compact {
+        serde_json::to_writer(writer, package)?;
+    } else {
+        let full = FullPackage {
+            package: package.package,
+            bets: package
+                .outcome_ids
+                .iter()
+                .map(|&id| &catalog.outcomes[usize::from(id) - 1])
+                .collect(),
+            total_payout_bps: package.total_payout_bps,
+        };
+        serde_json::to_writer(writer, &full)?;
+    }
+    Ok(())
+}
+
+fn run(options: Options) -> Result<(), Box<dyn Error>> {
     let mut rng = rand::rng();
-    println!("\nGenerando hasta {maximum_requested} apuestas. Procesando...");
-    io::stdout().flush()?;
     let start = Instant::now();
-    let sim = simulate_with_count(config, count, &mut rng)?;
-    let elapsed = start.elapsed();
-
-    println!("Matriz: 6x6 | Simbolos por celda: 5 | Saldos distintos: {}", sim.wallets.len());
-    println!("RTP teorico: 96,5000% (fraccion {expected_num}/{expected_den})");
-    let distribution = match count {
-        BetCount::Total(_) => "apuestas TOTALES repartidas",
-        BetCount::PerWallet(_) => "apuestas POR SALDO",
+    let catalog = if let Some(path) = &options.reuse_catalog {
+        let reader = BufReader::new(File::open(path)?);
+        let catalog: Catalog = serde_json::from_reader(reader)?;
+        validate_catalog(&catalog)?;
+        catalog
+    } else {
+        generate_catalog(&mut rng)?
     };
-    println!(
-        "Apuesta: {} unidades minimas | Cantidad: {} {}",
-        config.bet, maximum_requested, distribution
-    );
-    println!(
-        "Apuestas realizadas: {} | Apostado: {} | Premiado: {}",
-        sim.total_spins, sim.total_bet, sim.total_prize
-    );
-    if sim.total_spins < maximum_requested {
-        println!(
-            "Aviso: {} apuestas no pudieron realizarse por saldo insuficiente.",
-            maximum_requested - sim.total_spins
-        );
+    if theoretical_rtp_bps() != RTP_TARGET_BPS {
+        return Err("RTP no coincide con 96,5%".into());
     }
+    fs::create_dir_all(&options.output)?;
+    write_catalog(&catalog, &options.output)?;
+
+    let package_path = options.output.join("paquetes.jsonl");
+    let mut jsonl = BufWriter::new(File::create(&package_path)?);
+    let mut summary = BufWriter::new(File::create(options.output.join("resumen_paquetes.csv"))?);
+    writeln!(
+        summary,
+        "paquete,apuestas,tipos_unicos,retorno_en_unidades_de_apuesta,rtp_observado_pct"
+    )?;
+
+    let individual_dir = options.output.join("paquetes");
+    if options.split_files {
+        fs::create_dir_all(&individual_dir)?;
+    }
+
+    let mut total_return_bps = 0_u128;
+    let mut frequencies = [0_u64; TYPES];
+
+    println!("Catalogo: {TYPES} matrices distintas de 6x6");
+    println!("RTP teorico: {:.4}%", RTP_TARGET_BPS as f64 / 100.0);
     println!(
-        "RTP observado agregado: {:.5}% | Tiempo: {:.3} s",
-        observed_rtp(sim.total_bet, sim.total_prize),
-        elapsed.as_secs_f64()
+        "Generando {} paquetes de {} apuestas ({} apuestas solicitadas)...",
+        options.packages,
+        BETS_PER_PACKAGE,
+        (options.packages as u128) * BETS_PER_PACKAGE as u128,
     );
+    io::stdout().flush()?;
 
-    print_example(&sim);
+    for index in 1..=options.packages {
+        let package = generate_package(&catalog, index, &mut rng);
+        debug_assert_eq!(package.outcome_ids.len(), BETS_PER_PACKAGE);
+        for &id in &package.outcome_ids {
+            let slot = &mut frequencies[usize::from(id) - 1];
+            *slot = slot.checked_add(1).ok_or("desbordamiento de frecuencias")?;
+        }
+        total_return_bps = total_return_bps
+            .checked_add(u128::from(package.total_payout_bps))
+            .ok_or("desbordamiento de retorno")?;
 
-    if !summary_only {
-        println!("\nID | Saldo inicial | Saldo final | Giros | Apostado | Premiado | RTP observado");
-        for wallet in &sim.wallets {
-            println!(
-                "{:>3} | {:>13} | {:>11} | {:>5} | {:>8} | {:>8} | {:>9.4}%",
-                wallet.wallet_id,
-                wallet.opening_balance,
-                wallet.closing_balance,
-                wallet.spins,
-                wallet.total_bet,
-                wallet.total_prize,
-                observed_rtp(wallet.total_bet, wallet.total_prize)
-            );
+        encode_package(&mut jsonl, &package, &catalog, options.compact)?;
+        jsonl.write_all(b"\n")?;
+        writeln!(
+            summary,
+            "{},{},{},{:.4},{:.4}",
+            index,
+            BETS_PER_PACKAGE,
+            BETS_PER_PACKAGE,
+            package.total_payout_bps as f64 / BASIS_POINTS as f64,
+            package.observed_rtp_percent()
+        )?;
+
+        if options.split_files {
+            let file_name = format!("paquete_{index:06}.json");
+            let mut out = BufWriter::new(File::create(individual_dir.join(file_name))?);
+            encode_package(&mut out, &package, &catalog, options.compact)?;
+            out.write_all(b"\n")?;
+            out.flush()?;
+        }
+
+        if index % 1000 == 0 {
+            println!("Paquetes completados: {index}/{}", options.packages);
+            io::stdout().flush()?;
         }
     }
+    jsonl.flush()?;
+    summary.flush()?;
 
-    if let Some(path) = csv_path {
-        save_csv(&path, &sim.wallets)?;
-        let printed_path = path.canonicalize().unwrap_or(path);
-        println!("\nCSV escrito: {}", printed_path.display());
+    let mut freq_file = BufWriter::new(File::create(options.output.join("frecuencias_tipos.csv"))?);
+    writeln!(freq_file, "tipo_id,veces_seleccionado,retorno_bps,retorno_multiplicador")?;
+    for (outcome, frequency) in catalog.outcomes.iter().zip(frequencies.iter()) {
+        writeln!(
+            freq_file,
+            "{},{},{},{:.4}",
+            outcome.id,
+            frequency,
+            outcome.payout_bps,
+            outcome.payout_bps as f64 / BASIS_POINTS as f64
+        )?;
+    }
+    freq_file.flush()?;
+
+    let total_bets = options.packages as u128 * BETS_PER_PACKAGE as u128;
+    let rtp_observed_percent =
+        total_return_bps as f64 * 100.0 / (total_bets as f64 * BASIS_POINTS as f64);
+    let elapsed = start.elapsed();
+    let report = json!({
+        "catalog_outcomes": TYPES,
+        "grid_size": [6, 6],
+        "package_count": options.packages,
+        "bets_per_package": BETS_PER_PACKAGE,
+        "total_bets": total_bets.to_string(),
+        "theoretical_rtp_percent": 96.5,
+        "observed_rtp_percent": rtp_observed_percent,
+        "total_return_in_bet_units": total_return_bps as f64 / BASIS_POINTS as f64,
+        "sampling": "shuffle all 128, take 100 without replacement, repeat independently",
+        "compact_package_references": options.compact,
+        "split_files": options.split_files,
+        "elapsed_seconds": elapsed.as_secs_f64()
+    });
+    let output_report = BufWriter::new(File::create(options.output.join("reporte.json"))?);
+    serde_json::to_writer_pretty(output_report, &report)?;
+
+    println!();
+    println!("Paquetes generados: {}", options.packages);
+    println!("Apuestas generadas: {total_bets}");
+    println!("Tipos distintos en cada paquete: {BETS_PER_PACKAGE}/{TYPES}");
+    println!("RTP teorico: 96,5000%");
+    println!("RTP observado: {rtp_observed_percent:.4}%");
+    println!("Retorno total: {:.4} unidades de apuesta", total_return_bps as f64 / BASIS_POINTS as f64);
+    println!("Tiempo: {:.3} segundos", elapsed.as_secs_f64());
+    println!("Directorio: {}", options.output.canonicalize()?.display());
+    println!("Archivos: catalogo_128.json, catalogo_128.csv, paquetes.jsonl,");
+    println!("          resumen_paquetes.csv, frecuencias_tipos.csv, reporte.json");
+    if options.split_files {
+        println!("          + {} archivos individuales en /paquetes", options.packages);
     }
     Ok(())
 }
 
 fn main() {
-    let interactive = env::args_os().len() == 1
-        || env::args_os().any(|arg| arg == "--interactive");
-    let failed = if let Err(error) = run() {
-        eprintln!("\nError: {error}");
-        true
-    } else {
-        false
-    };
-    if interactive && io::stdin().is_terminal() {
-        println!("\nPresiona Enter para cerrar...");
+    let direct_interactive = env::args_os().len() == 1 && io::stdin().is_terminal();
+    let result = parse_args().and_then(|(options, interactive)| {
+        if options.packages == 0 {
+            return Ok(());
+        }
+        if interactive {
+            println!();
+        }
+        run(options)
+    });
+    if let Err(error) = result {
+        eprintln!("\nERROR: {error}");
+        if direct_interactive {
+            eprintln!("Revisa la carpeta y las opciones. Pulsa Enter para cerrar.");
+            let mut line = String::new();
+            let _ = io::stdin().read_line(&mut line);
+        }
+        std::process::exit(1);
+    }
+    if direct_interactive {
+        println!("\nPresiona Enter para cerrar.");
         let mut line = String::new();
         let _ = io::stdin().read_line(&mut line);
-    }
-    if failed {
-        std::process::exit(1);
     }
 }
