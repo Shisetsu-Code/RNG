@@ -135,7 +135,8 @@ pub fn audit<R: Rng + ?Sized>(
 
     let start = Instant::now();
     let mut frequency = [0_u64; TYPES];
-    let mut checkpoints = [const { CheckpointAccumulator::default() }; CHECKPOINTS.len()];
+    let mut checkpoints: [CheckpointAccumulator; CHECKPOINTS.len()] =
+        std::array::from_fn(|_| CheckpointAccumulator::default());
     let mut duplicates = 0_u64;
     let mut paid = 0_u128;
 
