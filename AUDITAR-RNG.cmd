@@ -1,5 +1,5 @@
 @echo off
-setlocal EnableExtensions
+setlocal EnableExtensions EnableDelayedExpansion
 title RNG 6x6 - Auditoria de seguridad
 cd /d "%~dp0"
 echo ----------------------------------------------
@@ -22,7 +22,7 @@ if "%MODE_CHOICE%"=="3" set "MODE=independent"
 set "GPUFLAG="
 if not "%MODE%"=="independent" (
   set /p GPU_CHOICE="Utilizar GPU AMD/NVIDIA si esta disponible? (S/N) [N]: "
-  if /I "%GPU_CHOICE%"=="S" set "GPUFLAG=--gpu"
+  if /I "!GPU_CHOICE!"=="S" set "GPUFLAG=--gpu"
 )
 echo.
 echo Ejecutando auditoria...
