@@ -42,6 +42,7 @@ pub struct IdPredictor {
     pub expected_random_hits: f64,
     pub excess_hits_z_approx: f64,
     pub statistically_significant_excess: bool,
+    pub conservative_upper_tail_bound: Option<f64>,
 }
 
 #[derive(Default)]
@@ -67,6 +68,16 @@ impl IdAccum {
         } else {
             0.0
         };
+        // Conservative Chernoff upper bound for X >= hits under IID
+        // Bernoulli(p=1/TYPES), including sparse expected counts.
+        // Unlike a normal approximation it also detects strong anomalies
+        // when the random expected number of hits is < 30.
+        let upper_bound = if expectation > 0.0 && self.hits as f64 > expectation {
+            let k = self.hits as f64;
+            Some((-expectation + k * (1.0 + (expectation / k).ln())).exp().min(1.0))
+        } else {
+            None
+        };
         IdPredictor {
             name: name.to_owned(),
             evaluated: self.n,
@@ -77,9 +88,9 @@ impl IdAccum {
             random_baseline_percent: 100.0 * p,
             expected_random_hits: expectation,
             excess_hits_z_approx: z,
-            // Approximation unreliable with tiny expected counts; require
-            // at least 30 expected random hits to flag any predictor.
-            statistically_significant_excess: expectation >= 30.0 && z > THRESHOLD_Z,
+            // Fixed conservative familywise threshold across a small suite.
+            statistically_significant_excess: upper_bound.is_some_and(|p| p < 1e-10),
+            conservative_upper_tail_bound: upper_bound,
         }
     }
 }
