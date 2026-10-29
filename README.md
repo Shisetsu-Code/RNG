@@ -4,13 +4,13 @@ Simulador de 128 saldos iniciales distintos, con una matriz aleatoria de **6 fil
 
 El código no fuerza el RTP observado ni ajusta los premios según el saldo: el saldo **solo** sirve para debitar apuestas, acreditar premios y detener una cartera que ya no pueda apostar.
 
-## Windows — ejecutable listo para usar (sin instalar Rust)
+## Windows — interfaz grafica y ejecutable listo para usar (sin instalar Rust)
 
 1. Entra a [GitHub Actions](https://github.com/Shisetsu-Code/RNG/actions/workflows/ci.yml).
 2. Abre la última ejecución **exitosa** de «Rust RNG CI».
-3. Abajo, en **Artifacts**, descarga **RNG-6x6-Windows-x64** (archivo ZIP).
+3. Abajo, en **Artifacts**, descarga **RNG-6x6-Windows-GUI-x64** (archivo ZIP).
 4. Descomprime el ZIP en una carpeta con permiso de escritura.
-5. Haz doble clic en **INICIAR-WINDOWS.cmd** o **RNG-6x6.exe**.
+5. Haz doble clic en **RNG-6x6.exe** para abrir la ventana con los campos, botones de ejecutar/cancelar y resultados. Como alternativa puedes usar **INICIAR-WINDOWS.cmd**.
 
 El programa pregunta, en este orden:
 
@@ -21,7 +21,7 @@ El programa pregunta, en este orden:
 
 El menú muestra RTP teórico y RTP observado, tiempo de ejecución, apuestas jugadas, premios y un ejemplo de matriz 6×6. Si un saldo se queda sin fondos, el programa puede realizar menos apuestas que las solicitadas.
 
-La pantalla de consola queda abierta hasta que presiones Enter cuando lo ejecutas interactivamente. Windows puede advertir que el archivo no está firmado digitalmente.
+La interfaz principal es grafica, no necesita abrir manualmente la consola. **RNG-6x6-CLI.exe** es la version de consola para terminales y automatizaciones. Si la aplicacion no abre, ejecuta **DIAGNOSTICO-WINDOWS.cmd**: hace una autoprueba y guarda un reporte en la carpeta temporal de Windows. Windows puede advertir que el archivo no esta firmado digitalmente. Extrae todos los archivos juntos antes de ejecutarlo.
 
 ## Ejecución desde código fuente (Windows, Linux o macOS)
 
@@ -43,7 +43,7 @@ Para ejecutar **10.000 apuestas por cada saldo** (hasta 1.280.000):
 cargo run --release -- --spins 10000 --bet 48 --csv resultados.csv
 ```
 
-También puedes ejecutar el .exe con los mismos parámetros, por ejemplo `RNG-6x6.exe --bets 1000000 --csv resultados.csv`.
+También puedes ejecutar el .exe con los mismos parámetros, por ejemplo `RNG-6x6-CLI.exe --bets 1000000 --csv resultados.csv`.
 
 ## Ejecución anterior compatible
 
