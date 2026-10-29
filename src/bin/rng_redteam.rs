@@ -2,12 +2,12 @@ use rng_grid::audit::{Mode, ModeReport, audit, validate_trace};
 #[cfg(feature = "gpu")]
 use rng_grid::audit::{CHECKPOINTS, Trace};
 use rng_grid::{Catalog, TYPES, generate_catalog, validate_catalog};
-use rng_grid::long_attack::{LongAttackReport, observe_long_sequence};
+use rng_grid::long_attack::{LongAttackReport, observe_long_sequence, observe_long_sequence_from};
 use serde::Serialize;
 use std::env;
 use std::error::Error;
 use std::fs::{self, File};
-use std::io::BufReader;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -58,6 +58,7 @@ struct Options {
     gpu_batch: usize,
     long_bets: u64,
     long_only: bool,
+    observe_file: Option<PathBuf>,
 }
 
 impl Default for Options {
@@ -71,6 +72,7 @@ impl Default for Options {
             gpu_batch: 50_000,
             long_bets: 1_000_000,
             long_only: false,
+            observe_file: None,
         }
     }
 }
@@ -83,6 +85,7 @@ fn usage() {
          --packages N               Paquetes cortos por modelo (default 10000)\n\
          --long-bets N              Secuencia larga continua por modelo (default 1000000)\n\
          --long-only                Omite los tests cortos de 100 apuestas\n\
+         --observe-file RUTA        Audita una secuencia REAL de paquetes.jsonl\n\
          --mode all                  3 modelos: actual, historico y control debil\n\
          --mode without              Modelo antiguo: 100 sin reposicion\n\
          --mode independent          Motor ACTUAL: 100 sorteos independientes\n\
@@ -138,6 +141,11 @@ fn parse_args() -> Result<Option<Options>, Box<dyn Error>> {
                     .next().ok_or("falta numero para --long-bets")?.parse()?;
             }
             "--long-only" => options.long_only = true,
+            "--observe-file" => {
+                options.observe_file = Some(PathBuf::from(
+                    args.next().ok_or("falta ruta despues de --observe-file")?
+                ));
+            },
             "--gpu" => options.gpu_enabled = true,
             "--gpu-batch" => {
                 options.gpu_batch = args
@@ -156,6 +164,17 @@ fn parse_args() -> Result<Option<Options>, Box<dyn Error>> {
     }
     if options.long_only && options.long_bets == 0 {
         return Err("--long-only requiere --long-bets > 0".into());
+    }
+    if options.observe_file.is_some() {
+        if !matches!(options.mode, Selection::Independent) {
+            return Err("--observe-file exige --mode independent (catalogo de produccion)".into());
+        }
+        if options.long_bets < 1000 {
+            return Err("--observe-file necesita --long-bets N (minimo 1000)".into());
+        }
+        if options.catalog.is_none() {
+            return Err("--observe-file necesita --catalog catalogo_128000.json".into());
+        }
     }
     if options.gpu_batch > 100_000 {
         return Err("--gpu-batch debe ser como maximo 100000 (limite de memoria)".into());
@@ -462,7 +481,46 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
                 "\nAtacante de secuencias largas: modelo {} / {} giros seguidos...",
                 mode.label(), options.long_bets
             );
-            let long = observe_long_sequence(&catalog, mode, options.long_bets, &mut rng)?;
+            let long = if let Some(input_path) = &options.observe_file {
+                // El archivo puede contener paquetes compactos o completos.
+                // Consume linea a linea, sin exponer al atacante semillas o estado.
+                let reader = BufReader::new(File::open(input_path)?);
+                let mut lines = reader.lines();
+                observe_long_sequence_from(&catalog, mode, options.long_bets, |package_no| {
+                    let content = loop {
+                        match lines.next() {
+                            Some(Ok(line)) if !line.trim().is_empty() => break line,
+                            Some(Ok(_)) => continue,
+                            Some(Err(error)) => return Err(format!("error leyendo JSONL: {error}")),
+                            None => return Err(format!(
+                                "el archivo contiene menos paquetes que los necesarios                                  para {} observaciones; paquete faltante {}",
+                                options.long_bets, package_no + 1
+                            )),
+                        }
+                    };
+                    let parsed: serde_json::Value = serde_json::from_str(&content)
+                        .map_err(|error| format!("paquete {}: JSON invalido: {error}", package_no+1))?;
+                    let payload = parsed.get("outcome_ids")
+                        .or_else(|| parsed.get("bets"))
+                        .and_then(serde_json::Value::as_array)
+                        .ok_or_else(|| format!("paquete {} sin outcome_ids o bets",package_no+1))?;
+                    let ids: Vec<u32> = payload.iter().map(|entry| {
+                        let id = if entry.is_object() {
+                            entry.get("id").and_then(serde_json::Value::as_u64)
+                        } else {
+                            entry.as_u64()
+                        };
+                        id.and_then(|value| u32::try_from(value).ok())
+                            .filter(|&value| value > 0 && value <= TYPES as u32)
+                            .ok_or_else(|| format!("paquete {}: ID invalido", package_no+1))
+                    }).collect::<Result<_,_>>()?;
+                    ids.try_into().map_err(|v: Vec<u32>| format!(
+                        "paquete {} tiene {} giros, se esperaban 100", package_no+1, v.len()
+                    ))
+                })?
+            } else {
+                observe_long_sequence(&catalog, mode, options.long_bets, &mut rng)?
+            };
             println!(
                 "  Training {} | Test {} | alertas={} | tiempo {:.3}s",
                 long.training_observations,
