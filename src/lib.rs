@@ -1,98 +1,126 @@
-//! Matriz 6x6 con símbolos equiprobables y RTP teórico exacto de 96,5%.
-//! El RNG nunca recibe el saldo del jugador; el saldo solo habilita apuestas.
+//! Catalogo de 128 resultados distintos de 6x6, mezclados en paquetes de 100.
+//!
+//! Cada tipo tiene un premio fijo determinado por sus 36 simbolos.
+//! La probabilidad por tipo es exactamente 1/128 al mezclar uniformemente.
+//! El RTP de la distribucion es exactamente 9.650 puntos basicos (96,5%).
+//! Ningun resultado ni probabilidad cambia en funcion de saldos o ganancias.
 
+use rand::seq::SliceRandom;
 use rand::{Rng, RngExt};
+use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 pub const ROWS: usize = 6;
 pub const COLS: usize = 6;
 pub const SYMBOLS: u8 = 5;
-pub const WALLETS: usize = 128;
-pub const BET_QUANTUM: u64 = 48;
-pub const THEORETICAL_RTP_NUM: u128 = 193;
-pub const THEORETICAL_RTP_DEN: u128 = 200;
+pub const TYPES: usize = 128;
+pub const BETS_PER_PACKAGE: usize = 100;
+pub const BASIS_POINTS: u64 = 10_000;
+pub const RTP_TARGET_BPS: u64 = 9_650;
 
 pub type Grid = [[u8; COLS]; ROWS];
 
-// Multiplicadores expresados en octavos de la apuesta de UNA fila.
-// Prefijo igual de longitud 0/1/2/3/4/5/6.
-// 2 -> 3x; 3 -> 8x; 4 -> 20x; 5 -> 50x; 6 -> 115,625x.
-const PAY_MULTIPLIERS_EIGHTHS: [u16; 7] = [0, 0, 24, 64, 160, 400, 925];
-
+/// Reparto fijo de tipos por premio.
+/// Los multiplicadores son puntos basicos: 10000 = 1x, 15000 = 1,5x.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Spin {
+pub struct Tier {
+    pub count: usize,
+    pub payout_bps: u32,
+}
+
+pub const TIERS: [Tier; 8] = [
+    Tier { count: 64, payout_bps: 0 },       // 0x
+    Tier { count: 32, payout_bps: 10_000 },  // 1x
+    Tier { count: 16, payout_bps: 15_000 },  // 1,5x
+    Tier { count: 8, payout_bps: 20_000 },   // 2x
+    Tier { count: 1, payout_bps: 35_200 },   // 3,52x
+    Tier { count: 4, payout_bps: 40_000 },   // 4x
+    Tier { count: 2, payout_bps: 80_000 },   // 8x
+    Tier { count: 1, payout_bps: 160_000 },  // 16x
+];
+
+/// Cada tipo es una matriz unica, con retorno explicito.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Outcome {
+    pub id: u16,
     pub grid: Grid,
-    pub line_prizes: [u128; ROWS],
-    pub total_prize: u128,
+    pub matching_pairs: u8,
+    pub payout_bps: u32,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct Config {
-    pub spins_per_wallet: usize,
-    pub bet: u64,
-    pub base_balance: u64,
-    pub balance_step: u64,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Catalog {
+    pub version: u8,
+    pub grid_size: [usize; 2],
+    pub symbols: u8,
+    pub theoretical_rtp_bps: u64,
+    pub sampling: String,
+    pub outcomes: Vec<Outcome>,
 }
 
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            spins_per_wallet: 10_000,
-            bet: BET_QUANTUM,
-            base_balance: 1_000_000,
-            balance_step: 10_000,
-        }
+/// Un paquete contiene EXACTAMENTE 100 referencias a tipos del catalogo.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Package {
+    pub package: usize,
+    pub outcome_ids: Vec<u16>,
+    /// Suma de los multiplicadores individuales, en puntos basicos.
+    /// Dividir por 10000 para conocer el retorno en unidades de apuesta.
+    pub total_payout_bps: u64,
+}
+
+impl Package {
+    pub fn observed_rtp_percent(&self) -> f64 {
+        self.total_payout_bps as f64 * 100.0
+            / (BETS_PER_PACKAGE as f64 * BASIS_POINTS as f64)
     }
 }
 
-impl Config {
-    pub fn validate(&self) -> Result<(), &'static str> {
-        if self.spins_per_wallet == 0 {
-            return Err("spins_per_wallet debe ser mayor que cero");
+/// Cuenta las parejas de simbolos horizontalmente adyacentes e iguales.
+/// Cada una de las 36 celdas contribuye a una o mas comparaciones.
+pub fn matching_pairs(grid: &Grid) -> u8 {
+    let mut matches = 0_u8;
+    for row in grid {
+        for pair in row.windows(2) {
+            if pair[0] == pair[1] {
+                matches += 1;
+            }
         }
-        if self.bet < BET_QUANTUM || self.bet % BET_QUANTUM != 0 {
-            return Err("bet debe ser un multiplo positivo de 48 unidades minimas");
-        }
-        if self.balance_step == 0 {
-            return Err("balance_step debe ser mayor que cero para crear 128 saldos distintos");
-        }
-        Ok(())
+    }
+    matches
+}
+
+/// Los 8 niveles se calculan UNICAMENTE a partir de los 36 simbolos.
+/// Los niveles son 0..3, 4, 5, 6, 7, 8, 9, 10..30 parejas iguales.
+pub fn tier_for_score(score: u8) -> usize {
+    match score {
+        0..=3 => 0,
+        4 => 1,
+        5 => 2,
+        6 => 3,
+        7 => 4,
+        8 => 5,
+        9 => 6,
+        _ => 7,
     }
 }
 
-/// Como repartir la cantidad solicitada de apuestas entre los 128 saldos.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BetCount {
-    /// Total global, repartido lo mas uniformemente posible entre las carteras.
-    Total(usize),
-    /// Limite de apuestas individual para cada una de las 128 carteras.
-    PerWallet(usize),
+pub fn evaluate_grid(grid: &Grid) -> u32 {
+    TIERS[tier_for_score(matching_pairs(grid))].payout_bps
 }
 
-#[derive(Debug, Clone)]
-pub struct WalletReport {
-    pub wallet_id: usize,
-    pub opening_balance: u128,
-    pub closing_balance: u128,
-    pub spins: usize,
-    pub total_bet: u128,
-    pub total_prize: u128,
+/// Devuelve 9650 solo si el reparto de tipos es exactamente 96,5%.
+pub fn theoretical_rtp_bps() -> u64 {
+    let types: usize = TIERS.iter().map(|tier| tier.count).sum();
+    let total: u64 = TIERS
+        .iter()
+        .map(|tier| tier.count as u64 * u64::from(tier.payout_bps))
+        .sum();
+    assert_eq!(types, TYPES, "la tabla de premios no suma 128 tipos");
+    assert_eq!(total % TYPES as u64, 0, "RTP no representable en bps");
+    total / TYPES as u64
 }
 
-#[derive(Debug, Clone)]
-pub struct Simulation {
-    pub wallets: Vec<WalletReport>,
-    pub example_spin: Option<Spin>,
-    pub total_spins: usize,
-    pub total_bet: u128,
-    pub total_prize: u128,
-}
-
-/// Devuelve 36 símbolos equiprobables en [0, 5).
-///
-/// La fuente debe ser un CSPRNG. En la CLI se usa rand::rng(), un
-/// generador criptográfico local que se inicializa desde el sistema operativo.
-/// No se usa el saldo, el usuario ni la apuesta como semilla.
-pub fn generate_grid<R: Rng + ?Sized>(rng: &mut R) -> Grid {
+fn random_grid<R: Rng + ?Sized>(rng: &mut R) -> Grid {
     let mut grid = [[0_u8; COLS]; ROWS];
     for row in &mut grid {
         for symbol in row {
@@ -102,316 +130,218 @@ pub fn generate_grid<R: Rng + ?Sized>(rng: &mut R) -> Grid {
     grid
 }
 
-/// Cantidad de símbolos iguales consecutivos desde la izquierda.
-fn leading_matches(row: &[u8; COLS]) -> usize {
-    let first = row[0];
-    1 + row[1..].iter().take_while(|&&symbol| symbol == first).count()
-}
-
-/// Calcula las seis líneas horizontales directamente desde la matriz.
-/// La apuesta total se divide en seis; cada apuesta por línea debe ser
-/// múltiplo de ocho para representar exactamente el premio 115,625x.
-pub fn evaluate(grid: Grid, bet: u64) -> Result<Spin, &'static str> {
-    if bet < BET_QUANTUM || bet % BET_QUANTUM != 0 {
-        return Err("la apuesta debe ser multiplo de 48");
-    }
-    if grid.iter().flatten().any(|&symbol| symbol >= SYMBOLS) {
-        return Err("la matriz contiene un simbolo fuera de rango");
+/// Genera 128 matrices distintas, respetando exactamente la cuota de
+/// resultados de cada clase. El muestreo es uniforme dentro de cada clase.
+/// Finalmente mezcla las matrices y les asigna un identificador 1..128.
+pub fn generate_catalog<R: Rng + ?Sized>(rng: &mut R) -> Result<Catalog, String> {
+    if theoretical_rtp_bps() != RTP_TARGET_BPS {
+        return Err("la tabla de resultados no cumple RTP 96,5%".to_owned());
     }
 
-    let line_bet = u128::from(bet) / ROWS as u128;
-    let mut line_prizes = [0_u128; ROWS];
-    let mut total_prize = 0_u128;
+    let mut counts = [0_usize; 8];
+    let mut seen = HashSet::<Grid>::with_capacity(TYPES);
+    let mut outcomes = Vec::<Outcome>::with_capacity(TYPES);
 
-    for (index, row) in grid.iter().enumerate() {
-        let matches = leading_matches(row);
-        let scaled_multiplier = u128::from(PAY_MULTIPLIERS_EIGHTHS[matches]);
-        let prize = line_bet
-            .checked_mul(scaled_multiplier)
-            .ok_or("desbordamiento del premio")?
-            / 8;
-        line_prizes[index] = prize;
-        total_prize = total_prize
-            .checked_add(prize)
-            .ok_or("desbordamiento del premio total")?;
-    }
-    Ok(Spin {
-        grid,
-        line_prizes,
-        total_prize,
-    })
-}
-
-/// Fracción exacta del retorno esperado de una apuesta.
-///
-/// Si hay cinco símbolos uniformes, la probabilidad de un prefijo
-/// EXACTO de k símbolos es 4/5^k para k=2..=5 y 1/5^5 para k=6.
-/// Los resultados para una fila son mutuamente excluyentes.
-/// La fracción se devuelve sobre denominador 25.000.
-pub fn exact_rtp() -> (u128, u128) {
-    const DENOMINATOR: u128 = 25_000;
-    const PROBABILITIES: [(u128, u128); 5] = [
-        (4, 25),
-        (4, 125),
-        (4, 625),
-        (4, 3_125),
-        (1, 3_125),
-    ];
-    let numerator = PROBABILITIES
-        .iter()
-        .enumerate()
-        .map(|(index, &(numerator, denominator))| {
-            // P(k) * (pago_en_octavos/8) * DENOMINATOR.
-            let multiplier = u128::from(PAY_MULTIPLIERS_EIGHTHS[index + 2]);
-            numerator * multiplier * (DENOMINATOR / (denominator * 8))
-        })
-        .sum();
-    (numerator, DENOMINATOR)
-}
-
-/// Simula exactamente 128 monederos con 128 saldos iniciales distintos.
-/// Cada monedero ejecuta como máximo spins_per_wallet apuestas.
-/// Cuando no alcanza el saldo, deja de apostar sin alterar la distribución.
-pub fn simulate<R: Rng + ?Sized>(
-    config: Config,
-    rng: &mut R,
-) -> Result<Simulation, &'static str> {
-    simulate_with_count(config, BetCount::PerWallet(config.spins_per_wallet), rng)
-}
-
-/// La cantidad TOTAL se reparte entre las 128 carteras: las primeras
-/// (total % 128) reciben una apuesta adicional.
-/// Si una cartera queda sin fondos, sus apuestas pendientes no se trasladan
-/// a otra cartera; el numero efectivamente jugado puede ser menor.
-pub fn simulate_with_count<R: Rng + ?Sized>(
-    config: Config,
-    count: BetCount,
-    rng: &mut R,
-) -> Result<Simulation, &'static str> {
-    config.validate()?;
-    let requested_bets = match count {
-        BetCount::Total(n) | BetCount::PerWallet(n) => n,
-    };
-    if requested_bets == 0 {
-        return Err("la cantidad de apuestas debe ser mayor que cero");
-    }
-
-    let bet = u128::from(config.bet);
-    let mut wallets = Vec::with_capacity(WALLETS);
-    let mut example_spin = None;
-    let (mut total_spins, mut total_bet, mut total_prize) = (0_usize, 0_u128, 0_u128);
-
-    for index in 0..WALLETS {
-        let opening_balance =
-            u128::from(config.base_balance) + index as u128 * u128::from(config.balance_step);
-        let mut wallet = WalletReport {
-            wallet_id: index + 1,
-            opening_balance,
-            closing_balance: opening_balance,
-            spins: 0,
-            total_bet: 0,
-            total_prize: 0,
-        };
-
-        let requested_for_wallet = match count {
-            BetCount::PerWallet(n) => n,
-            BetCount::Total(n) => n / WALLETS + usize::from(index < n % WALLETS),
-        };
-        for _ in 0..requested_for_wallet {
-            if wallet.closing_balance < bet {
-                break;
-            }
-
-            let spin = evaluate(generate_grid(rng), config.bet)?;
-            if example_spin.is_none() {
-                example_spin = Some(spin);
-            }
-
-            // Primero descontar apuesta; despues acreditar el premio.
-            wallet.closing_balance -= bet;
-            wallet.closing_balance = wallet
-                .closing_balance
-                .checked_add(spin.total_prize)
-                .ok_or("desbordamiento del saldo")?;
-            wallet.spins += 1;
-            wallet.total_bet = wallet
-                .total_bet
-                .checked_add(bet)
-                .ok_or("desbordamiento del total apostado")?;
-            wallet.total_prize = wallet
-                .total_prize
-                .checked_add(spin.total_prize)
-                .ok_or("desbordamiento del total premiado")?;
+    // Los 8 niveles tienen probabilidad positiva al generar matrices 6x6
+    // aleatorias. Este limite evita bucles infinitos si cambia esa regla.
+    for _ in 0..1_000_000_u32 {
+        if outcomes.len() == TYPES {
+            break;
         }
-
-        total_spins = total_spins
-            .checked_add(wallet.spins)
-            .ok_or("desbordamiento del numero de apuestas")?;
-        total_bet = total_bet
-            .checked_add(wallet.total_bet)
-            .ok_or("desbordamiento del total apostado")?;
-        total_prize = total_prize
-            .checked_add(wallet.total_prize)
-            .ok_or("desbordamiento del total premiado")?;
-        wallets.push(wallet);
+        let grid = random_grid(rng);
+        let score = matching_pairs(&grid);
+        let tier_id = tier_for_score(score);
+        if counts[tier_id] >= TIERS[tier_id].count || !seen.insert(grid) {
+            continue;
+        }
+        counts[tier_id] += 1;
+        outcomes.push(Outcome {
+            id: 0,
+            grid,
+            matching_pairs: score,
+            payout_bps: TIERS[tier_id].payout_bps,
+        });
     }
 
-    Ok(Simulation {
-        wallets,
-        example_spin,
-        total_spins,
-        total_bet,
-        total_prize,
-    })
+    if outcomes.len() != TYPES {
+        return Err(format!(
+            "no fue posible completar los {TYPES} tipos unicos (generados: {})",
+            outcomes.len()
+        ));
+    }
+
+    outcomes.shuffle(rng);
+    for (index, outcome) in outcomes.iter_mut().enumerate() {
+        outcome.id = u16::try_from(index + 1).expect("128 cabe en u16");
+    }
+    let catalog = Catalog {
+        version: 1,
+        grid_size: [ROWS, COLS],
+        symbols: SYMBOLS,
+        theoretical_rtp_bps: RTP_TARGET_BPS,
+        sampling: "mezcla uniforme de los 128 tipos, tomar 100 sin reemplazo por paquete"
+            .to_owned(),
+        outcomes,
+    };
+    validate_catalog(&catalog)?;
+    Ok(catalog)
+}
+
+/// Valida un catalogo de disco: evita matrices duplicadas, premios
+/// adulterados y desviaciones de la distribucion de tipos.
+pub fn validate_catalog(catalog: &Catalog) -> Result<(), String> {
+    if catalog.version != 1
+        || catalog.grid_size != [ROWS, COLS]
+        || catalog.symbols != SYMBOLS
+        || catalog.outcomes.len() != TYPES
+        || catalog.theoretical_rtp_bps != RTP_TARGET_BPS
+    {
+        return Err("metadatos del catalogo incorrectos".to_owned());
+    }
+
+    let mut seen = HashSet::<Grid>::with_capacity(TYPES);
+    let mut observed_counts = [0_usize; 8];
+    let mut total_bps = 0_u64;
+
+    for (index, outcome) in catalog.outcomes.iter().enumerate() {
+        if usize::from(outcome.id) != index + 1 {
+            return Err(format!("id de tipo incorrecto: {}", outcome.id));
+        }
+        if outcome.grid.iter().flatten().any(|&symbol| symbol >= SYMBOLS) {
+            return Err(format!("simbolo invalido en el tipo {}", outcome.id));
+        }
+        if !seen.insert(outcome.grid) {
+            return Err(format!("matriz duplicada en el tipo {}", outcome.id));
+        }
+        let score = matching_pairs(&outcome.grid);
+        let tier_id = tier_for_score(score);
+        if outcome.matching_pairs != score
+            || outcome.payout_bps != TIERS[tier_id].payout_bps
+        {
+            return Err(format!(
+                "premio o puntaje inconsistente con matriz en tipo {}",
+                outcome.id
+            ));
+        }
+        observed_counts[tier_id] += 1;
+        total_bps += u64::from(outcome.payout_bps);
+    }
+    if observed_counts
+        .iter()
+        .zip(TIERS.iter())
+        .any(|(&count, tier)| count != tier.count)
+    {
+        return Err("las cuotas de tipos no coinciden con la tabla de RTP".to_owned());
+    }
+    if total_bps != RTP_TARGET_BPS * TYPES as u64 {
+        return Err("el retorno matematico no es del 96,5%".to_owned());
+    }
+    Ok(())
+}
+
+/// Mezcla los 128 IDs mediante un RNG, y toma los primeros 100.
+/// Nunca repite un tipo DENTRO del mismo paquete. En paquetes
+/// diferentes los tipos vuelven a participar, con la misma probabilidad.
+pub fn generate_package<R: Rng + ?Sized>(
+    catalog: &Catalog,
+    number: usize,
+    rng: &mut R,
+) -> Package {
+    let mut ids: Vec<u16> = catalog.outcomes.iter().map(|outcome| outcome.id).collect();
+    ids.shuffle(rng);
+    ids.truncate(BETS_PER_PACKAGE);
+
+    let total_payout_bps = ids
+        .iter()
+        .map(|&id| u64::from(catalog.outcomes[usize::from(id) - 1].payout_bps))
+        .sum();
+
+    Package {
+        package: number,
+        outcome_ids: ids,
+        total_payout_bps,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn losing_grid() -> Grid {
-        [[0, 1, 2, 3, 4, 0]; ROWS]
+    #[test]
+    fn paytable_has_128_types_and_exact_9650_bps() {
+        assert_eq!(TIERS.iter().map(|tier| tier.count).sum::<usize>(), 128);
+        assert_eq!(theoretical_rtp_bps(), 9_650);
+        assert_eq!(
+            TIERS
+                .iter()
+                .map(|tier| tier.count as u64 * u64::from(tier.payout_bps))
+                .sum::<u64>(),
+            1_235_200
+        );
     }
 
     #[test]
-    fn rtp_is_mathematically_exact() {
-        let (num, den) = exact_rtp();
-        assert_eq!((num, den), (24_125, 25_000));
-        assert_eq!(num * THEORETICAL_RTP_DEN, den * THEORETICAL_RTP_NUM);
+    fn all_36_cells_are_valid_and_all_128_grids_are_unique() {
+        let mut rng = rand::rng();
+        let catalog = generate_catalog(&mut rng).unwrap();
+        assert_eq!(catalog.outcomes.len(), 128);
+        assert!(validate_catalog(&catalog).is_ok());
+        assert!(catalog
+            .outcomes
+            .iter()
+            .flat_map(|outcome| outcome.grid.iter().flatten())
+            .all(|&value| value < SYMBOLS));
     }
 
     #[test]
-    fn payout_is_derived_from_visible_cells() {
-        let expected: [(usize, u128); 5] =
-            [(2, 24), (3, 64), (4, 160), (5, 400), (6, 925)];
-        for (matches, prize) in expected {
-            let mut grid = losing_grid();
-            grid[0][..matches].fill(1);
-            if matches < COLS {
-                grid[0][matches] = 2;
-            }
-            let spin = evaluate(grid, 48).unwrap();
-            assert_eq!(spin.total_prize, prize, "prefijo de {matches}");
-            assert_eq!(spin.line_prizes[0], prize);
-            assert!(spin.line_prizes[1..].iter().all(|&value| value == 0));
+    fn every_matrix_determines_its_payout() {
+        let mut rng = rand::rng();
+        let catalog = generate_catalog(&mut rng).unwrap();
+        for item in &catalog.outcomes {
+            assert_eq!(item.payout_bps, evaluate_grid(&item.grid));
+            assert_eq!(item.matching_pairs, matching_pairs(&item.grid));
         }
     }
 
     #[test]
-    fn maximum_prize_is_six_full_lines() {
-        let grid = [[3; COLS]; ROWS];
-        assert_eq!(evaluate(grid, 48).unwrap().total_prize, 6 * 925);
-    }
-
-    #[test]
-    fn invalid_bets_and_symbols_are_rejected() {
-        assert!(evaluate(losing_grid(), 47).is_err());
-        assert!(evaluate(losing_grid(), 49).is_err());
-        let mut bad = losing_grid();
-        bad[2][3] = SYMBOLS;
-        assert!(evaluate(bad, 48).is_err());
-    }
-
-    #[test]
-    fn grid_shape_and_symbols_are_valid() {
+    fn each_package_has_100_different_ids() {
         let mut rng = rand::rng();
-        for _ in 0..100 {
-            let grid = generate_grid(&mut rng);
-            assert_eq!(grid.len(), ROWS);
-            assert!(grid.iter().flatten().all(|&symbol| symbol < SYMBOLS));
+        let catalog = generate_catalog(&mut rng).unwrap();
+        for index in 1..=40 {
+            let package = generate_package(&catalog, index, &mut rng);
+            assert_eq!(package.package, index);
+            assert_eq!(package.outcome_ids.len(), 100);
+            assert_eq!(package.outcome_ids.iter().copied().collect::<HashSet<_>>().len(), 100);
+            assert!(package.outcome_ids.iter().all(|&id| (1..=128).contains(&id)));
+            let expected_sum: u64 = package
+                .outcome_ids
+                .iter()
+                .map(|&id| u64::from(catalog.outcomes[usize::from(id) - 1].payout_bps))
+                .sum();
+            assert_eq!(package.total_payout_bps, expected_sum);
         }
     }
 
     #[test]
-    fn simulations_have_128_distinct_balances() {
+    fn invalid_catalog_is_rejected() {
         let mut rng = rand::rng();
-        let config = Config {
-            spins_per_wallet: 1,
-            bet: 48,
-            base_balance: 48,
-            balance_step: 1,
-        };
-        let result = simulate(config, &mut rng).unwrap();
-        assert_eq!(result.wallets.len(), 128);
-        assert_eq!(result.total_spins, 128);
-        assert_eq!(result.wallets[0].opening_balance, 48);
-        assert_eq!(result.wallets[127].opening_balance, 175);
-        for (index, wallet) in result.wallets.iter().enumerate() {
-            assert_eq!(wallet.opening_balance, 48 + index as u128);
-            assert_eq!(
-                wallet.closing_balance,
-                wallet.opening_balance - wallet.total_bet + wallet.total_prize
-            );
-        }
+        let mut catalog = generate_catalog(&mut rng).unwrap();
+        catalog.outcomes[1].grid = catalog.outcomes[0].grid;
+        assert!(validate_catalog(&catalog).is_err());
     }
 
     #[test]
-    fn total_count_is_split_across_wallets_without_exceeding_request() {
+    fn serialization_roundtrip_preserves_catalog_and_package() {
         let mut rng = rand::rng();
-        let config = Config {
-            spins_per_wallet: 1,
-            bet: 48,
-            base_balance: 1_000_000,
-            balance_step: 1,
-        };
-        let result = simulate_with_count(config, BetCount::Total(257), &mut rng).unwrap();
-        assert_eq!(result.wallets.len(), WALLETS);
-        assert_eq!(result.total_spins, 257);
-        assert_eq!(result.wallets[0].spins, 3);
-        assert!(result.wallets[1..].iter().all(|wallet| wallet.spins == 2));
+        let catalog = generate_catalog(&mut rng).unwrap();
+        let content = serde_json::to_vec(&catalog).unwrap();
+        let copy: Catalog = serde_json::from_slice(&content).unwrap();
+        assert_eq!(catalog.outcomes, copy.outcomes);
+        validate_catalog(&copy).unwrap();
 
-        let result = simulate_with_count(config, BetCount::Total(1), &mut rng).unwrap();
-        assert_eq!(result.total_spins, 1);
-        assert_eq!(result.wallets[0].spins, 1);
-        assert!(result.wallets[1..].iter().all(|wallet| wallet.spins == 0));
-    }
-
-    #[test]
-    fn per_wallet_count_is_preserved() {
-        let mut rng = rand::rng();
-        let config = Config {
-            spins_per_wallet: 5,
-            bet: 48,
-            base_balance: 1_000_000,
-            balance_step: 1,
-        };
-        let result = simulate_with_count(config, BetCount::PerWallet(3), &mut rng).unwrap();
-        assert_eq!(result.total_spins, WALLETS * 3);
-        assert!(result.wallets.iter().all(|wallet| wallet.spins == 3));
-        assert!(simulate_with_count(config, BetCount::Total(0), &mut rng).is_err());
-    }
-
-    #[test]
-    fn total_count_stops_if_wallet_is_unfunded() {
-        let mut rng = rand::rng();
-        let config = Config {
-            spins_per_wallet: 1,
-            bet: 48,
-            base_balance: 0,
-            balance_step: 1,
-        };
-        let result = simulate_with_count(config, BetCount::Total(128), &mut rng).unwrap();
-        assert_eq!(result.total_spins, 80);
-        assert_eq!(result.wallets[0].spins, 0);
-        assert_eq!(result.wallets[47].spins, 0);
-        assert_eq!(result.wallets[48].spins, 1);
-    }
-
-    #[test]
-    fn insufficient_balance_stops_only_that_wallet() {
-        let mut rng = rand::rng();
-        let result = simulate(
-            Config {
-                spins_per_wallet: 1,
-                bet: 48,
-                base_balance: 0,
-                balance_step: 1,
-            },
-            &mut rng,
-        )
-        .unwrap();
-        assert_eq!(result.wallets[0].spins, 0);
-        assert_eq!(result.wallets[47].spins, 0);
-        assert_eq!(result.wallets[48].spins, 1);
+        let package = generate_package(&copy, 1, &mut rng);
+        let json = serde_json::to_vec(&package).unwrap();
+        let decoded: Package = serde_json::from_slice(&json).unwrap();
+        assert_eq!(package.outcome_ids, decoded.outcome_ids);
     }
 }
