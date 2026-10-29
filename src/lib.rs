@@ -332,14 +332,14 @@ mod tests {
         }
         assert!(repeats > 0, "el motor debe permitir IDs repetidos");
         assert_eq!(frequencies.iter().sum::<usize>(), 1024 * 100);
-        // Una distribucion uniforme no se fuerza exactamente: las cuotas son
-        // fluctuaciones aleatorias. Con semilla fija, el test es reproducible.
-        let mean = 1024.0 * 100.0 / TYPES as f64;
-        let sigma = (mean * (1.0 - 1.0 / TYPES as f64)).sqrt();
-        let max_z = frequencies.iter()
-            .map(|&count| (count as f64 - mean).abs() / sigma)
-            .fold(0.0_f64, f64::max);
-        assert!(max_z < 8.0, "revisar el reparto estadistico: z={max_z}");
+        // Con 128000 categorias y media 0,8 por ID, un maximo de
+        // 8 sigmas NO es evidencia de sesgo: es un problema de pruebas
+        // multiples sobre conteos Poisson escasos. Se comprueba cobertura
+        // en un intervalo amplio con muestreo IID y semilla reproducible.
+        let observed = frequencies.iter().filter(|&&count| count > 0).count();
+        assert!(observed > 60_000 && observed < 80_000,
+            "cobertura inesperada: {observed}");
+
     }
 
     #[test]
