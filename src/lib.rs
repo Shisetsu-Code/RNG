@@ -31,14 +31,14 @@ pub struct Tier {
 }
 
 pub const TIERS: [Tier; 8] = [
-    Tier { count: 4096, payout_bps: 0 },       // 0x
+    Tier { count: 64000, payout_bps: 0 },       // 0x
     Tier { count: 32000, payout_bps: 10_000 },  // 1x
     Tier { count: 16000, payout_bps: 15_000 },  // 1,5x
     Tier { count: 8000, payout_bps: 20_000 },   // 2x
     Tier { count: 1000, payout_bps: 35_200 },   // 3,52x
     Tier { count: 4000, payout_bps: 40_000 },   // 4x
     Tier { count: 2000, payout_bps: 80_000 },   // 8x
-    Tier { count: 64, payout_bps: 160_000 },  // 16x
+    Tier { count: 1000, payout_bps: 160_000 },  // 16x
 ];
 
 /// Cada tipo es una matriz unica, con retorno explicito.
