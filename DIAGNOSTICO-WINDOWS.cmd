@@ -19,13 +19,14 @@ echo.
   echo --- Verificar GUI ---
   if exist "%~dp0RNG-6x6-GUI.ps1" (
     powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File "%~dp0RNG-6x6-GUI.ps1" -SelfTest
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File "%~dp0RNG-6x6-GUI.ps1" -TestForm
   ) else (
     echo ERROR: No esta RNG-6x6-GUI.ps1
   )
   echo.
-  echo --- Prueba RNG con 256 apuestas ---
+  echo --- Prueba RNG con 2 paquetes de 100 ---
   if exist "%~dp0RNG-6x6-CLI.exe" (
-    "%~dp0RNG-6x6-CLI.exe" --total-spins 256 --summary-only
+    "%~dp0RNG-6x6-CLI.exe" --packages 2 --out "%TEMP%\RNG-6x6-smoke" --compact
   ) else (
     echo ERROR: No esta RNG-6x6-CLI.exe
   )
