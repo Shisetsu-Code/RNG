@@ -1,10 +1,10 @@
 [package]
 name = "rng-grid"
 default-run = "rng-grid"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.85"
-description = "6x6 RNG: 8192 fixed outcome types, uniform independent sampling with replacement, 96.5% theoretical RTP"
+description = "6x6 RNG: 128000 fixed outcome types, uniform independent sampling with replacement, 96.5% theoretical RTP"
 publish = false
 
 [dependencies]
