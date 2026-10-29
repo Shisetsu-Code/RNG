@@ -145,6 +145,8 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
       - name: Build GPU-enabled auditor (wgpu 30 for AMD/NVIDIA)
         run: cargo build --release --features gpu --bin rng_redteam
+      - name: Validate WGSL shader with Naga (no GPU required)
+        run: cargo test --features gpu --bin rng_redteam
       - name: Clippy for GPU feature
         run: cargo clippy --features gpu --bin rng_redteam -- -D warnings
       - name: E2E adversarial audit on Windows using GPU-capable executable in CPU mode
