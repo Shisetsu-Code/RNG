@@ -1,34 +1,40 @@
-// wgpu WGSL: una invocacion analiza los prefijos de un paquete de 100.
-// NO genera aleatoriedad: solo calcula el RTP condicional a partir de
-// los resultados previos y del catalogo publico. Todos son enteros exactos.
+// wgpu WGSL: una invocacion analiza prefijos de un paquete de 100.
+// Solo analiza matrices ya sorteadas por CPU; no genera ninguna semilla.
+// El total del catalogo se precalcula en CPU (8192 premios).
+struct CatalogSettings {
+    types: u32,
+    payout_sum_bps: u32,
+    package_size: u32,
+    reserved: u32,
+}
+
 @group(0) @binding(0) var<storage, read> ids: array<u32>;
 @group(0) @binding(1) var<storage, read> payouts: array<u32>;
 @group(0) @binding(2) var<storage, read_write> expected: array<u32>;
+@group(0) @binding(3) var<uniform> settings: CatalogSettings;
 
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let batch_index = gid.x;
-    let offset = batch_index * 100u;
+    let offset = batch_index * settings.package_size;
     if offset >= arrayLength(&ids) {
         return;
     }
 
-    var remaining: u32 = 0u;
-    for (var j: u32 = 0u; j < 128u; j = j + 1u) {
-        remaining = remaining + payouts[j];
-    }
-    var count = 128u;
+    var remaining = settings.payout_sum_bps;
+    var possible = settings.types;
 
-    for (var k: u32 = 0u; k < 100u; k = k + 1u) {
-        if (k == 0u)  { expected[batch_index * 6u + 0u] = remaining / count; }
-        if (k == 25u) { expected[batch_index * 6u + 1u] = remaining / count; }
-        if (k == 50u) { expected[batch_index * 6u + 2u] = remaining / count; }
-        if (k == 75u) { expected[batch_index * 6u + 3u] = remaining / count; }
-        if (k == 90u) { expected[batch_index * 6u + 4u] = remaining / count; }
-        if (k == 99u) { expected[batch_index * 6u + 5u] = remaining / count; }
+    for (var k: u32 = 0u; k < settings.package_size; k = k + 1u) {
+        let position = batch_index * 6u;
+        if (k == 0u)  { expected[position + 0u] = remaining / possible; }
+        if (k == 25u) { expected[position + 1u] = remaining / possible; }
+        if (k == 50u) { expected[position + 2u] = remaining / possible; }
+        if (k == 75u) { expected[position + 3u] = remaining / possible; }
+        if (k == 90u) { expected[position + 4u] = remaining / possible; }
+        if (k == 99u) { expected[position + 5u] = remaining / possible; }
 
         let id = ids[offset + k];
-        remaining = remaining - payouts[id - 1u];
-        count = count - 1u;
+        remaining -= payouts[id - 1u];
+        possible -= 1u;
     }
 }
