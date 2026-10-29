@@ -14,13 +14,13 @@ El **RTP teorico es exactamente 96,5%**: no se fuerza que cada paquete, ni que u
 4. **Descomprime el ZIP completo** a una carpeta.
 5. Ejecuta con doble clic **RNG-6x6.exe**.
 
-La ventana permite especificar la **cantidad de paquetes**, seleccionar el directorio de salida, reutilizar el catalogo generado en una ejecucion anterior, elegir paquete completo o compacto y crear opcionalmente un JSON separado por paquete.
+La ventana nativa de Windows permite especificar la **cantidad de paquetes**, seleccionar la ruta del directorio de salida, reutilizar el catalogo generado en una ejecucion anterior, elegir paquete completo o compacto y crear opcionalmente un JSON separado por paquete. Incluye botones para **generar** y **cancelar**, y muestra los resultados o los errores dentro de la ventana.
 
 **Ejemplo:** 500 paquetes equivalen a 50.000 apuestas/selecciones de la lista de 128 tipos.
 
-No hace falta instalar Rust para ejecutar el ZIP de Windows. El motor esta programado en Rust; la interfaz grafica usa Windows Forms para simplificar su uso. El programa funciona localmente y no requiere internet.
+No hace falta instalar Rust para ejecutar el ZIP de Windows. **El motor y la interfaz grafica estan programados en Rust nativo para Windows (API Win32). No se necesita PowerShell, Python ni instalar Rust.** El programa funciona localmente y no requiere internet.
 
-Si no se inicia, usa **INICIAR-WINDOWS.cmd** y despues **DIAGNOSTICO-WINDOWS.cmd**. El diagnostico crea un archivo de texto en la carpeta temporal.
+Si no se inicia, usa **INICIAR-WINDOWS.cmd** y despues **DIAGNOSTICO-WINDOWS.cmd**. El diagnostico prueba la apertura de controles de la GUI y la generacion de tres paquetes a traves del motor Rust, y crea un archivo de texto en la carpeta temporal. Si sigue fallando, comparte el mensaje exacto y ese archivo.
 
 ## Terminal
 
