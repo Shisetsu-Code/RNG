@@ -85,6 +85,31 @@ jobs:
           print("OK: unchanged catalog, embedded 6x6 matrices and exactly 100 bets.")
           PY
 
+      - name: Audit security: secure shuffling vs independent draws vs weak control
+        shell: bash
+        run: |
+          cargo run --release --bin rng_redteam -- --packages 256 --mode all --catalog smoke/catalogo_128.json --out redteam
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path("redteam/auditoria.json").read_text())
+          runs = report["runs"]
+          assert len(runs) == 3
+          without, independent, weak = runs
+          assert without["mode"] == "without_replacement"
+          assert without["structural_exploit_detected"] is True
+          assert without["duplicates_within_packages"] == 0
+          assert without["checkpoints"][-1]["possible_next_types"] == 29
+          assert independent["mode"] == "with_replacement"
+          assert independent["structural_exploit_detected"] is False
+          assert independent["checkpoints"][-1]["possible_next_types"] == 128
+          assert all(x["conditional_positive_ev_opportunities"] == 0 for x in independent["checkpoints"])
+          assert weak["mode"] == "weak_counter" and weak["weak_rng_predictable"] is True
+          assert weak["checkpoints"][-1]["increment_predictor_success_percent"] == 100
+          assert len(Path("redteam/predicciones.csv").read_text().splitlines()) == 19
+          print("RNG ATTACK SUITE OK: structural leak detected; iid reference and weak canary validated.")
+          PY
+
   windows-portable:
     name: Build GUI+CLI for Windows x64 and test startup
     runs-on: windows-latest
@@ -118,6 +143,19 @@ jobs:
           }
       - name: Clippy for native Windows GUI
         run: cargo clippy --all-targets -- -D warnings
+      - name: Build GPU-enabled auditor (wgpu 30 for AMD/NVIDIA)
+        run: cargo build --release --features gpu --bin rng_redteam
+      - name: Clippy for GPU feature
+        run: cargo clippy --features gpu --bin rng_redteam -- -D warnings
+      - name: E2E adversarial audit on Windows using GPU-capable executable in CPU mode
+        shell: pwsh
+        run: |
+          .\target\release\rng_redteam.exe --packages 64 --mode all --catalog smoke\catalogo_128.json --out audit_smoke
+          if ($LASTEXITCODE -ne 0) { throw "RNG auditor test failed" }
+          $result = Get-Content .\audit_smoke\auditoria.json -Raw | ConvertFrom-Json
+          if ($result.runs.Count -ne 3) { throw "Expected three audit models" }
+          if (-not $result.runs[0].structural_exploit_detected) { throw "Structural leak not detected" }
+          if (-not $result.runs[2].weak_rng_predictable) { throw "Predictor failed to detect intentionally weak RNG" }
       - name: Validate actual native GUI startup and generate button path
         shell: pwsh
         run: |
@@ -138,6 +176,9 @@ jobs:
           Copy-Item INICIAR-WINDOWS.cmd dist\INICIAR-WINDOWS.cmd
           Copy-Item DIAGNOSTICO-WINDOWS.cmd dist\DIAGNOSTICO-WINDOWS.cmd
           Copy-Item README.md dist\README.md
+          Copy-Item AUDITAR-RNG.cmd dist\AUDITAR-RNG.cmd
+          Copy-Item target\release\rng_redteam.exe dist\RNG-6x6-AUDITOR.exe
+          if ((Get-Item dist\RNG-6x6-AUDITOR.exe).Length -lt 1024) { throw "Invalid auditor executable" }
           if (Test-Path dist\RNG-6x6-GUI.ps1) { throw "PowerShell dependency must not be shipped" }
           if ((Get-Item dist\RNG-6x6.exe).Length -lt 1024) { throw "Invalid launcher" }
           if ((Get-Item dist\RNG-6x6-CLI.exe).Length -lt 1024) { throw "Invalid CLI binary" }
