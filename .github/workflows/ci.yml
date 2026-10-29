@@ -112,6 +112,24 @@ jobs:
               assert (Path("long_audit")/name).exists()
           print("Long-horizon attack confirmed with strict out-of-sample evaluation.")
           PY
+      - name: Audit actual 500-package JSONL sequence as independent holdout
+        shell: bash
+        run: |
+          cargo run --release --bin rng_redteam -- --mode independent --long-only --long-bets 50000 --catalog spread/catalogo_128000.json --observe-file spread/paquetes.jsonl --out real_observed
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path("real_observed/auditoria.json").read_text())
+          assert report["catalog_size"] == 128000
+          assert report["runs"] == []
+          assert len(report["long_sequence"]) == 1
+          sequence = report["long_sequence"][0]
+          assert sequence["observations"] == 50000
+          assert sequence["training_observations"] == 35000
+          assert sequence["holdout_observations"] == 15000
+          assert sequence["observed_package_boundaries"] == 150
+          print("Actual JSONL consumed without lookahead or unbounded buffering.")
+          PY
       - name: Test reuse and embedded full matrices
         shell: bash
         run: |
@@ -134,7 +152,7 @@ jobs:
       - name: "Audit security: secure shuffling vs independent draws vs weak control"
         shell: bash
         run: |
-          cargo run --release --bin rng_redteam -- --packages 256 --mode all --catalog smoke/catalogo_128000.json --out redteam
+          cargo run --release --bin rng_redteam -- --packages 256 --long-bets 0 --mode all --catalog smoke/catalogo_128000.json --out redteam
           python3 - <<'PY'
           import json
           from pathlib import Path
