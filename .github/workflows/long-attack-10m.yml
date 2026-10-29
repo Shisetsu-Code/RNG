@@ -1,0 +1,210 @@
+name: RNG 128000 - ataque real 10000000
+
+on:
+  push:
+    paths:
+      - ".github/workflows/long-attack-10m.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  long-attack:
+    name: Generador 10M vs atacante sobre misma secuencia
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Instalar Rust estable
+        shell: bash
+        run: |
+          rustup update stable
+          rustup default stable
+
+      - name: Compilar generador y atacante optimizados
+        run: cargo build --release --bin rng-grid --bin rng_redteam
+
+      - name: Generar 100000 paquetes de 100 apuestas
+        shell: bash
+        run: |
+          set -o pipefail
+          ./target/release/rng-grid --packages 100000 --out generator --compact | tee generator.log
+
+      - name: Verificar 10 millones de resultados y reportes
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+
+          folder = Path("generator")
+          catalog = json.loads((folder/"catalogo_128000.json").read_text())
+          assert catalog["version"] == 3
+          outcomes = catalog["outcomes"]
+          assert len(outcomes) == 128000
+          assert sum(o["payout_bps"] for o in outcomes) == 128000 * 9650
+          payouts = [o["payout_bps"] for o in outcomes]
+
+          count = 0
+          n = 0
+          paid_bps = 0
+          repeats = 0
+          frequency = [0] * 128000
+          with (folder/"paquetes.jsonl").open(encoding="utf-8") as file:
+              for line in file:
+                  if not line.strip():
+                      continue
+                  package = json.loads(line)
+                  count += 1
+                  assert package["package"] == count
+                  ids = package["outcome_ids"]
+                  assert len(ids) == 100
+                  assert all(type(i) is int and 1 <= i <= 128000 for i in ids)
+                  award = sum(payouts[i-1] for i in ids)
+                  assert package["total_payout_bps"] == award
+                  paid_bps += award
+                  n += 100
+                  repeats += 100 - len(set(ids))
+                  for i in ids:
+                      frequency[i-1] += 1
+          assert count == 100000, count
+          assert n == 10000000, n
+          report = json.loads((folder/"reporte.json").read_text())
+          assert report["catalog_outcomes"] == 128000
+          assert report["package_count"] == 100000
+          assert int(report["total_bets"]) == n
+          assert int(report["duplicate_draws_within_packages"]) == repeats
+          assert report["minimum_occurrences_per_type"] == min(frequency)
+          assert report["maximum_occurrences_per_type"] == max(frequency)
+
+          actual = paid_bps / n / 100
+          assert abs(actual - report["observed_rtp_percent"]) < 1e-8
+          for name in ("catalogo_128000.json","paquetes.jsonl"):
+              hashval = hashlib.sha256()
+              with (folder/name).open("rb") as stream:
+                  for chunk in iter(lambda: stream.read(1024*1024), b""):
+                      hashval.update(chunk)
+              Path(name + ".sha256").write_text(hashval.hexdigest() + "  generator/" + name + "\n")
+          summary = {
+              "catalog_types":128000,
+              "packages":count,
+              "bets":n,
+              "rtp_target_percent":96.5,
+              "rtp_observed_percent":actual,
+              "duplicates":repeats,
+              "types_observed":sum(value > 0 for value in frequency),
+              "min_frequency":min(frequency),
+              "max_frequency":max(frequency)
+          }
+          Path("verified_generator.json").write_text(json.dumps(summary,indent=2))
+          print(json.dumps(summary, indent=2))
+          PY
+
+      - name: Atacar secuencia REAL con 7M training y 3M holdout
+        shell: bash
+        run: |
+          set -o pipefail
+          ./target/release/rng_redteam --mode independent --long-only \
+            --long-bets 10000000 \
+            --catalog generator/catalogo_128000.json \
+            --observe-file generator/paquetes.jsonl \
+            --out audit_real_10m | tee attacker.log
+
+      - name: Confirmar deteccion de generador debil de control
+        shell: bash
+        run: |
+          set -o pipefail
+          ./target/release/rng_redteam --mode weak --long-only \
+            --long-bets 300000 \
+            --catalog generator/catalogo_128000.json \
+            --out weak_control | tee weak_control.log
+
+      - name: Validar ataque y publicar resumen
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          real = json.loads(Path("audit_real_10m/auditoria.json").read_text())
+          weak = json.loads(Path("weak_control/auditoria.json").read_text())
+          ver = json.loads(Path("verified_generator.json").read_text())
+          assert len(real["long_sequence"]) == 1
+          assert real["runs"] == []
+          audit = real["long_sequence"][0]
+          assert audit["observations"] == 10000000
+          assert audit["training_observations"] == 7000000
+          assert audit["holdout_observations"] == 3000000
+          assert audit["observed_package_boundaries"] == 30000
+          assert len(audit["id_predictors"]) == 6
+          assert len(audit["payout_class_predictors"]) == 3
+          assert len(audit["lags"]) == 6
+          control = weak["long_sequence"][0]
+          plus_one = next(p for p in control["id_predictors"] if "ID previo + 1" in p["name"])
+          assert plus_one["accuracy_percent"] > 98.0
+          assert control["any_flagged_statistical_pattern"] is True
+
+          lines = [
+              "# Ataque real a 10 millones de apuestas",
+              "",
+              "- Catalogo de 128.000 tipos, RTP teorico del 96,5%",
+              "- Secuencia real: el archivo paquetes.jsonl del generador",
+              "- Entrenamiento: 7.000.000; prueba independiente: 3.000.000",
+              "- RTP observado: {:.6f}%".format(ver["rtp_observed_percent"]),
+              "- Tipos observados: {:,}".format(ver["types_observed"]),
+              "- Repeticiones dentro de paquetes: {:,}".format(ver["duplicates"]),
+              "- Alerta estadistica fuera de muestra: {}".format(audit["any_flagged_statistical_pattern"]),
+              "- Control debil detectado: {}".format(control["any_flagged_statistical_pattern"]),
+              "- Acertados por predictor +1 del control: {:.4f}%".format(plus_one["accuracy_percent"]),
+              "",
+              "## Predictores frente a azar en holdout",
+              "| Predictor | Aciertos | Intentos | Precision | Esperado azar | Z aproximado | Alerta |",
+              "|---|---:|---:|---:|---:|---:|---|",
+          ]
+          for p in audit["id_predictors"]:
+              lines.append(
+                  "| {} | {} | {} | {:.6f}% | {:.6f}% | {:.3f} | {} |".format(
+                      p["name"],p["hits"],p["evaluated"],p["accuracy_percent"],
+                      p["random_baseline_percent"],p["excess_hits_z_approx"],
+                      p["statistically_significant_excess"]))
+          lines.extend(["", "Advertencia: las pruebas estadisticas no certifican seguridad criptografica."])
+          summary = "\n".join(lines) + "\n"
+          Path("resumen.md").write_text(summary)
+          print(summary)
+          with open(os.environ["GITHUB_STEP_SUMMARY"],"a",encoding="utf-8") as out:
+              out.write(summary)
+          PY
+
+      - name: Subir informes completos de la auditoria
+        uses: actions/upload-artifact@v7
+        with:
+          name: RNG-128000-ataque-real-10M-INFORME
+          path: |
+            resumen.md
+            verified_generator.json
+            generator.log
+            attacker.log
+            weak_control.log
+            *.sha256
+            audit_real_10m/
+            weak_control/
+            generator/reporte.json
+            generator/frecuencias_tipos.csv
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Subir secuencia completa y catalogo para reproducibilidad
+        uses: actions/upload-artifact@v7
+        with:
+          name: RNG-128000-10M-SECUENCIA-COMPLETA
+          path: |
+            generator/catalogo_128000.json
+            generator/paquetes.jsonl
+          if-no-files-found: error
+          retention-days: 14
