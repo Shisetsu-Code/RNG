@@ -125,3 +125,101 @@ cargo clippy --all-targets -- -D warnings
 GitHub Actions verifica las 128 matrices distintas, los conteos de cada nivel de premios, el RTP teorico exacto, 100 IDs sin repeticion por paquete, los JSON y CSV, la reutilizacion del catalogo y el ejecutable Windows.
 
 **Alcance:** simulador matematico y generador local de resultados. No es un RNG certificado para apuestas reales; para operar con dinero real hace falta auditoria y certificacion adecuadas.
+
+
+## Auditoria adversarial: generador vs atacante (Rust)
+
+El segundo ejecutable es **RNG-6x6-AUDITOR.exe**, incluido en el ZIP de Windows.
+Para usarlo con una interfaz simple de consola, abre **AUDITAR-RNG.cmd**.
+Permite indicar cuántos paquetes de 100 giros analizar y seleccionar
+los modelos que se van a comparar.
+
+Ejemplo Windows, desde una terminal:
+
+```powershell
+.\RNG-6x6-AUDITOR.exe --packages 100000 --mode all --out auditoria_rng
+```
+
+Analisis acelerado en GPU (experimental, con DX12 o Vulkan):
+
+```powershell
+.\RNG-6x6-AUDITOR.exe --packages 100000 --mode without --gpu --gpu-batch 50000 --out auditoria_gpu
+```
+
+Con el codigo fuente:
+
+```bash
+cargo run --release --bin rng_redteam -- --packages 10000 --mode all
+cargo run --release --features gpu --bin rng_redteam -- --packages 100000 --mode without --gpu
+```
+
+La auditoria prueba **tres modelos distintos**:
+
+1. **sin reposicion:** el modelo actual, barajar 128 IDs y entregar 100 sin repeticion;
+2. **independiente con reposicion:** cada giro extrae uniformemente uno de los 128 tipos, sin descartar anteriores;
+3. **contador debil:** control negativo, expresamente inseguro y solo de laboratorio, que permite predecir el siguiente tipo mediante +1.
+
+Los ataques usan solo el catalogo y las apuestas YA OBSERVADAS.
+Se evalua una prediccion ciega, otra que excluye IDs ya observados y
+otra de incremento secuencial; el generador debil tiene que ser detectado.
+Las probabilidades se contrastan contra la linea base matematica.
+
+**Vulnerabilidad estructural conocida:** con 99 resultados de un paquete
+sin reposicion observados, quedan exactamente 29 IDs posibles para el
+resultado numero 100. La probabilidad de una prediccion correcta basada
+en exclusion es entonces 1/29, frente a 1/128 antes de empezar.
+Ademas, el RTP condicional para un proximo giro puede calcularse como:
+
+```text
+RTP_condicional = (suma_premios_catalogo - suma_premios_observados)
+                   / (128 - numero_observado) / apuesta_unidad
+```
+
+El atacante puede identificar posiciones en las que el proximo giro
+tiene valor esperado positivo, si conoce el catalogo completo y el historial,
+y si la plataforma le permite decidir si, cuanto o cuando apostar.
+La auditoria registra la cantidad de esas oportunidades y el resultado
+teorico y realizado cuando se seleccionan.
+
+Esto es un problema del **muestreo sin reposicion**, NO una demostracion de
+que el generador criptografico de `rand`/ChaCha haya sido comprometido.
+Si el requisito principal es evitar apuestas selectivas basadas en informacion
+anterior, se recomienda usar extracciones independientes **con reposicion**:
+se mantienen los 128 tipos posibles y el 96,5% de RTP teorico en cada
+apuesta, aunque pueden repetirse IDs dentro de un paquete.
+No cambia el mecanismo productivo por defecto; el auditor muestra ambas
+opciones para tomar una decision informada.
+
+El auditor genera:
+
+- `auditoria.json`: resultados por modelo, riesgos, RTP y medidas estadisticas;
+- `predicciones.csv`: prefijos 0/25/50/75/90/99, acierto de predictores,
+  tasas esperadas y oportunidades de apuestas con RTP condicional >100%.
+
+### GPU: alcance y limitaciones
+
+`wgpu 30.0.1` usa shaders WGSL y backends nativos DirectX 12/Vulkan.
+El analizador GPU calcula en paralelo el retorno condicional por prefijo
+para lotes de paquetes **generados por CPU con un CSPRNG**.
+Los resultados se comparan contra el calculo CPU (hasta 1024 trazas por
+ejecucion). Si hay diferencias, la auditoria falla.
+
+Las tareas que se benefician mas de GPU son las mediciones masivas y
+paralelas. La mezcla de 128 IDs, el RNG criptografico y la escritura
+de archivos siguen en CPU, y la aceleracion neta **no esta garantizada**:
+mide tiempos y transferencias para determinar si compensa. La GPU
+no debe generar semillas ni resultados monetarios de produccion.
+
+El backend GPU es opcional. Si no se detecta una GPU compatible o falla
+la inicializacion, ejecuta el mismo estudio sin `--gpu`. En GitHub Actions
+se compila el backend GPU, pero solo puede verificarse su rendimiento en
+un equipo con tarjeta grafica disponible.
+
+### Validez de la auditoria
+
+Pasar pruebas estadisticas no certifica un CSPRNG. Esta herramienta detecta
+algunos fallos de frecuencia, prediccion trivial, sesgos y oportunidades
+de seleccion, pero no sustituye pruebas estandarizadas, revision del
+protocolo y auditoria criptografica independiente. Nunca deben
+entregarse lotes futuros, semillas o el estado interno del generador a clientes.
+
