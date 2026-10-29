@@ -24,6 +24,7 @@ impl GpuAnalyzer {
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 force_fallback_adapter: false,
                 compatible_surface: None,
+                ..wgpu::RequestAdapterOptions::default()
             },
         ))
         .map_err(|error| format!(
