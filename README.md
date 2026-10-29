@@ -4,7 +4,48 @@ Simulador de 128 saldos iniciales distintos, con una matriz aleatoria de **6 fil
 
 El código no fuerza el RTP observado ni ajusta los premios según el saldo: el saldo **solo** sirve para debitar apuestas, acreditar premios y detener una cartera que ya no pueda apostar.
 
-## Ejecución
+## Windows — ejecutable listo para usar (sin instalar Rust)
+
+1. Entra a [GitHub Actions](https://github.com/Shisetsu-Code/RNG/actions/workflows/ci.yml).
+2. Abre la última ejecución **exitosa** de «Rust RNG CI».
+3. Abajo, en **Artifacts**, descarga **RNG-6x6-Windows-x64** (archivo ZIP).
+4. Descomprime el ZIP en una carpeta con permiso de escritura.
+5. Haz doble clic en **INICIAR-WINDOWS.cmd** o **RNG-6x6.exe**.
+
+El programa pregunta, en este orden:
+
+- Cuántas apuestas ejecutar (por ejemplo, 10.000, 1.000.000 o 10.000.000).
+- **1** para que esa sea la cantidad **total repartida entre 128 saldos** o **2** para que sea la cantidad **por cada saldo** (hasta 128 veces más apuestas).
+- Importe de cada apuesta (múltiplo de 48 unidades mínimas), saldo inicial y separación entre los 128 saldos.
+- Si deseas guardar los resultados automáticamente en **resultados.csv**.
+
+El menú muestra RTP teórico y RTP observado, tiempo de ejecución, apuestas jugadas, premios y un ejemplo de matriz 6×6. Si un saldo se queda sin fondos, el programa puede realizar menos apuestas que las solicitadas.
+
+La pantalla de consola queda abierta hasta que presiones Enter cuando lo ejecutas interactivamente. Windows puede advertir que el archivo no está firmado digitalmente.
+
+## Ejecución desde código fuente (Windows, Linux o macOS)
+
+Requiere Rust estable (mínimo 1.85) y Cargo. Para abrir el menú interactivo desde la carpeta del repositorio:
+
+```bash
+cargo run --release
+```
+
+Para ejecutar **1.000.000 de apuestas en total** sin menú:
+
+```bash
+cargo run --release -- --total-spins 1000000 --bet 48 --csv resultados.csv
+```
+
+Para ejecutar **10.000 apuestas por cada saldo** (hasta 1.280.000):
+
+```bash
+cargo run --release -- --spins 10000 --bet 48 --csv resultados.csv
+```
+
+También puedes ejecutar el .exe con los mismos parámetros, por ejemplo `RNG-6x6.exe --bets 1000000 --csv resultados.csv`.
+
+## Ejecución anterior compatible
 
 Requiere Rust estable (mínimo 1.85) y Cargo.
 
@@ -18,6 +59,7 @@ Genera 128 saldos iniciales:
 - Saldo n = `base-balance + (n - 1) * balance-step`, para n = 1..128.
 - Apuesta fija por giro = `bet` unidades mínimas.
 - Se detienen los giros de un saldo cuando no alcanza para la apuesta.
+- Con `--total-spins N` la cuota se distribuye uniformemente; si alguna cartera se queda sin fondos, las apuestas pendientes no se reasignan.
 - CSV: 128 filas de saldos, giros, apuestas, premios, RTP observado y saldo final.
 
 El ejemplo usa unidades enteras (pueden ser centavos), sin cálculo monetario en punto flotante. El valor de `--bet` debe ser múltiplo de **48** porque las seis líneas usan apuestas iguales y el multiplicador máximo tiene precisión de 1/8.
