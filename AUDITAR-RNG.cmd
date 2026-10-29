@@ -24,6 +24,16 @@ echo Modos: 1=Todos, 2=Historico sin reposicion, 3=Actual independiente
 set /p MODE_CHOICE="Elegir [1]: "
 if "%MODE_CHOICE%"=="2" set "MODE=without"
 if "%MODE_CHOICE%"=="3" set "MODE=independent"
+set "OBSERVE_REAL=N"
+if exist "%~dp0salida_rng\catalogo_128000.json" if exist "%~dp0salida_rng\paquetes.jsonl" (
+  echo.
+  set /p OBSERVE_REAL="Analizar secuencia REAL de salida_rng\paquetes.jsonl? (S/N) [N]: "
+  if /I "!OBSERVE_REAL!"=="S" (
+    set "MODE=independent"
+    set "LONG_ONLY_FLAG=--long-only"
+    echo Se usa el modelo actual y la secuencia real guardada.
+  )
+)
 set "GPUFLAG="
 if not "%MODE%"=="independent" (
   set /p GPU_CHOICE="Utilizar GPU AMD/NVIDIA si esta disponible? (S/N) [N]: "
@@ -33,10 +43,14 @@ echo.
 echo Ejecutando auditoria...
 if exist "%~dp0salida_rng\catalogo_128000.json" (
   echo Usando el catalogo ACTUAL del generador de paquetes.
-  "%~dp0RNG-6x6-AUDITOR.exe" --packages %PAQUETES% --long-bets %LONG_BETS% %LONG_ONLY_FLAG% --mode %MODE% --catalog "%~dp0salida_rng\catalogo_128000.json" --out "%~dp0auditoria_rng" %GPUFLAG%
+  if /I "!OBSERVE_REAL!"=="S" (
+    "%~dp0RNG-6x6-AUDITOR.exe" --packages %PAQUETES% --long-bets %LONG_BETS% --long-only --mode independent --catalog "%~dp0salida_rng\catalogo_128000.json" --observe-file "%~dp0salida_rng\paquetes.jsonl" --out "%~dp0auditoria_rng"
+  ) else (
+    "%~dp0RNG-6x6-AUDITOR.exe" --packages %PAQUETES% --long-bets %LONG_BETS% !LONG_ONLY_FLAG! --mode !MODE! --catalog "%~dp0salida_rng\catalogo_128000.json" --out "%~dp0auditoria_rng" !GPUFLAG!
+  )
 ) else (
   echo No hay catalogo previo; se creara un catalogo de prueba.
-  "%~dp0RNG-6x6-AUDITOR.exe" --packages %PAQUETES% --mode %MODE% --out "%~dp0auditoria_rng" %GPUFLAG%
+  "%~dp0RNG-6x6-AUDITOR.exe" --packages %PAQUETES% --long-bets %LONG_BETS% !LONG_ONLY_FLAG! --mode !MODE! --out "%~dp0auditoria_rng" !GPUFLAG!
 )
 if errorlevel 1 (
   echo.
