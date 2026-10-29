@@ -1,118 +1,127 @@
-# RNG 6×6 — Rust
+# RNG 6×6 — 128 tipos de resultado, paquetes de 100
 
-Simulador de 128 saldos iniciales distintos, con una matriz aleatoria de **6 filas × 6 columnas** por giro y **RTP teórico exacto de 96,5%**.
+Este programa implementa un catalogo de **128 tipos distintos de apuesta/resultado**, no 128 cuentas o saldos. Cada tipo contiene una matriz de 6 filas x 6 columnas y un multiplicador de pago calculado a partir de esa matriz.
 
-El código no fuerza el RTP observado ni ajusta los premios según el saldo: el saldo **solo** sirve para debitar apuestas, acreditar premios y detener una cartera que ya no pueda apostar.
+El programa mezcla los 128 tipos de forma aleatoria, selecciona **100 sin repeticion dentro del paquete**, vuelve a mezclar para el siguiente paquete y repite tantas veces como indiques.
 
-## Windows — interfaz grafica y ejecutable listo para usar (sin instalar Rust)
+El **RTP teorico es exactamente 96,5%**: no se fuerza que cada paquete, ni que un conjunto finito de paquetes, retorne exactamente 96,5%.
 
-1. Entra a [GitHub Actions](https://github.com/Shisetsu-Code/RNG/actions/workflows/ci.yml).
-2. Abre la última ejecución **exitosa** de «Rust RNG CI».
-3. Abajo, en **Artifacts**, descarga **RNG-6x6-Windows-GUI-x64** (archivo ZIP).
-4. Descomprime el ZIP en una carpeta con permiso de escritura.
-5. Haz doble clic en **RNG-6x6.exe** para abrir la ventana con los campos, botones de ejecutar/cancelar y resultados. Como alternativa puedes usar **INICIAR-WINDOWS.cmd**.
+## Windows 11: descargar y usar
 
-El programa pregunta, en este orden:
+1. Entra en [GitHub Actions](https://github.com/Shisetsu-Code/RNG/actions/workflows/ci.yml).
+2. Abre la ultima ejecucion que tenga el indicador de exito.
+3. Abajo, en **Artifacts**, descarga **RNG-6x6-Paquetes-Windows-x64**.
+4. **Descomprime el ZIP completo** a una carpeta.
+5. Ejecuta con doble clic **RNG-6x6.exe**.
 
-- Cuántas apuestas ejecutar (por ejemplo, 10.000, 1.000.000 o 10.000.000).
-- **1** para que esa sea la cantidad **total repartida entre 128 saldos** o **2** para que sea la cantidad **por cada saldo** (hasta 128 veces más apuestas).
-- Importe de cada apuesta (múltiplo de 48 unidades mínimas), saldo inicial y separación entre los 128 saldos.
-- Si deseas guardar los resultados automáticamente en **resultados.csv**.
+La ventana permite especificar la **cantidad de paquetes**, seleccionar el directorio de salida, reutilizar el catalogo generado en una ejecucion anterior, elegir paquete completo o compacto y crear opcionalmente un JSON separado por paquete.
 
-El menú muestra RTP teórico y RTP observado, tiempo de ejecución, apuestas jugadas, premios y un ejemplo de matriz 6×6. Si un saldo se queda sin fondos, el programa puede realizar menos apuestas que las solicitadas.
+**Ejemplo:** 500 paquetes equivalen a 50.000 apuestas/selecciones de la lista de 128 tipos.
 
-La interfaz principal es grafica, no necesita abrir manualmente la consola. **RNG-6x6-CLI.exe** es la version de consola para terminales y automatizaciones. Si la aplicacion no abre, ejecuta **DIAGNOSTICO-WINDOWS.cmd**: hace una autoprueba y guarda un reporte en la carpeta temporal de Windows. Windows puede advertir que el archivo no esta firmado digitalmente. Extrae todos los archivos juntos antes de ejecutarlo.
+No hace falta instalar Rust para ejecutar el ZIP de Windows. El motor esta programado en Rust; la interfaz grafica usa Windows Forms para simplificar su uso. El programa funciona localmente y no requiere internet.
 
-## Ejecución desde código fuente (Windows, Linux o macOS)
+Si no se inicia, usa **INICIAR-WINDOWS.cmd** y despues **DIAGNOSTICO-WINDOWS.cmd**. El diagnostico crea un archivo de texto en la carpeta temporal.
 
-Requiere Rust estable (mínimo 1.85) y Cargo. Para abrir el menú interactivo desde la carpeta del repositorio:
+## Terminal
 
-```bash
-cargo run --release
+Desde el codigo fuente, con Rust/Cargo instalados:
+
+```powershell
+cargo run --release -- --packages 500 --out salida_rng
 ```
 
-Para ejecutar **1.000.000 de apuestas en total** sin menú:
+Para usar el ejecutable de Windows (desde su carpeta):
 
-```bash
-cargo run --release -- --total-spins 1000000 --bet 48 --csv resultados.csv
+```powershell
+.\RNG-6x6-CLI.exe --packages 500 --out salida_rng
 ```
 
-Para ejecutar **10.000 apuestas por cada saldo** (hasta 1.280.000):
+Opciones:
 
-```bash
-cargo run --release -- --spins 10000 --bet 48 --csv resultados.csv
-```
+| Parametro | Funcion |
+|---|---|
+| `--packages 500` | Genera 500 paquetes de 100 resultados (50.000 apuestas) |
+| `--out ruta` | Directorio de salida (predeterminado: `salida_rng`) |
+| `--compact` | Cada paquete contiene solo los 100 IDs; busca las matrices en el catalogo |
+| `--split-files` | Ademas de `paquetes.jsonl`, crea un archivo JSON por paquete |
+| `--reuse-catalog ruta\catalogo_128.json` | Reutiliza exactamente los mismos 128 tipos sin reconstruir el catalogo |
 
-También puedes ejecutar el .exe con los mismos parámetros, por ejemplo `RNG-6x6-CLI.exe --bets 1000000 --csv resultados.csv`.
+Sin argumentos, la version CLI pregunta la cantidad de paquetes. La version GUI siempre muestra el campo correspondiente.
 
-## Ejecución anterior compatible
+## Generacion del catalogo
 
-Requiere Rust estable (mínimo 1.85) y Cargo.
+Cada tipo contiene:
 
-```bash
-cargo run --release -- --spins 10000 --bet 48 --base-balance 1000000 --balance-step 10000 --csv resultados.csv
-```
+- Un identificador de 1 a 128.
+- Una matriz de **6×6** con cinco simbolos posibles (0, 1, 2, 3 y 4).
+- Una puntuacion obtenida contando las parejas de simbolos horizontalmente adyacentes e iguales, en todas las filas.
+- Un multiplicador derivado de esa puntuacion.
 
-Genera 128 saldos iniciales:
+La distribucion fija de los 128 tipos es:
 
-- Saldo 1 = `base-balance`.
-- Saldo n = `base-balance + (n - 1) * balance-step`, para n = 1..128.
-- Apuesta fija por giro = `bet` unidades mínimas.
-- Se detienen los giros de un saldo cuando no alcanza para la apuesta.
-- Con `--total-spins N` la cuota se distribuye uniformemente; si alguna cartera se queda sin fondos, las apuestas pendientes no se reasignan.
-- CSV: 128 filas de saldos, giros, apuestas, premios, RTP observado y saldo final.
-
-El ejemplo usa unidades enteras (pueden ser centavos), sin cálculo monetario en punto flotante. El valor de `--bet` debe ser múltiplo de **48** porque las seis líneas usan apuestas iguales y el multiplicador máximo tiene precisión de 1/8.
-
-Si solo interesan totales y la matriz de ejemplo:
-
-```bash
-cargo run --release -- --spins 50000 --summary-only
-```
-
-Para ver los parámetros: `cargo run -- --help`.
-
-## Cómo se calcula el RTP
-
-Cada una de las 36 celdas contiene uno de **cinco** símbolos uniformes (`0..4`). Se evalúan las **seis líneas horizontales**, buscando la cantidad de símbolos iguales consecutivos desde la columna izquierda. Cada línea recibe 1/6 de la apuesta del giro.
-
-| Símbolos iniciales iguales (exactos) | Probabilidad por línea | Pago sobre apuesta de la línea |
+| Parejas iguales | Cantidad de tipos | Pago |
 |---|---:|---:|
-| 0 o 1 | 80% | 0× |
-| 2 | 4/25 = 16% | 3× |
-| 3 | 4/125 = 3,2% | 8× |
-| 4 | 4/625 = 0,64% | 20× |
-| 5 | 4/3125 = 0,128% | 50× |
-| 6 | 1/3125 = 0,032% | 115,625× |
+| 0 a 3 | 64 | 0x |
+| 4 | 32 | 1x |
+| 5 | 16 | 1,5x |
+| 6 | 8 | 2x |
+| 7 | 1 | 3,52x |
+| 8 | 4 | 4x |
+| 9 | 2 | 8x |
+| 10 o mas | 1 | 16x |
+| **TOTAL** | **128** | **RTP 96,5%** |
 
-**Comprobación exacta:**
+Calculo exacto mediante puntos basicos (10.000 = 1x):
 
 ```text
-RTP = (4/25 × 3) + (4/125 × 8) + (4/625 × 20)
-    + (4/3125 × 50) + (1/3125 × 115,625)
-    = 0,480 + 0,256 + 0,128 + 0,064 + 0,037
-    = 0,965 = 193/200 = 96,5%.
+RTP = (64*0 + 32*10000 + 16*15000 + 8*20000
+      + 1*35200 + 4*40000 + 2*80000 + 1*160000)
+      / (128*10000)
+    = 1235200 / 1280000
+    = 0,965 = 96,5%
 ```
 
-La función `exact_rtp()` obtiene también `24125/25000` mediante aritmética **entera**, sin aproximaciones.
+El conjunto se construye con matrices aleatorias y verificadas: no se repiten matrices y el premio guardado debe concordar con su contenido. Luego se mezclan los tipos. Los 128 tipos son **equiprobables** en cada seleccion.
 
-El RTP teórico **no significa** que cada cuenta, cada lote de 100 giros o una simulación finita entregue exactamente 96,5%. La variación aleatoria puede ser significativa.
+Este es un ejemplo de tabla de premios para el prototipo. Se puede cambiar, pero deben conservarse la comprobacion del RTP, la unicidad de matrices y la correspondencia entre matriz y premio.
 
-## Aleatoriedad y balances
+## Empaquetado RNG
 
-El programa usa `rand 0.10.3`, con la opción `unbiased`, y `rand::rng()`, un generador criptográfico inicializado con entropía del sistema operativo y reseeding periódico. Cada símbolo se obtiene mediante muestreo uniforme sin sesgo. Ni el ID, ni el saldo ni la cantidad apostada se usan como semillas o filtros para seleccionar matrices.
+Para **cada paquete de 100 apuestas**, el motor:
 
-Las 128 carteras comparten el mismo proceso de simulación, pero las matrices se generan con nuevas extracciones del CSPRNG. Los resultados de un saldo no modifican la distribución de los demás.
+1. Toma los IDs de los 128 tipos.
+2. Aplica una mezcla aleatoria mediante el generador criptografico de `rand` inicializado desde el sistema operativo.
+3. Selecciona los primeros 100 IDs (sin reemplazo dentro del paquete).
+4. Acumula los pagos y calcula el RTP observado de ese paquete.
+5. Escribe el paquete a disco y repite el proceso.
 
-Este repositorio es un **prototipo de simulación**, no un motor de apuestas reales auditado o certificado. Para producción deben añadirse registros verificables de giros, gestión y rotación de semillas, controles de concurrencia, límites operativos y una auditoría independiente del RNG y del juego.
+**Importante:** un mismo tipo puede aparecer en paquetes diferentes. Cada tipo tiene probabilidad 100/128 de entrar en cada paquete, y su posicion en el paquete es aleatoria. No se modifica la seleccion para ajustar un RTP historico o un saldo.
+
+## Archivos generados
+
+Todos dentro de la carpeta de salida:
+
+| Archivo | Contenido |
+|---|---|
+| `catalogo_128.json` | Los 128 tipos, sus matrices 6x6, sus premios y metadatos del RTP |
+| `catalogo_128.csv` | Version tabular con las seis filas de cada matriz |
+| `paquetes.jsonl` | **Un paquete de 100 apuestas por linea**, en formato JSON |
+| `resumen_paquetes.csv` | Cantidad de apuestas, retorno total y RTP observado por paquete |
+| `frecuencias_tipos.csv` | Veces que aparece cada uno de los 128 tipos |
+| `reporte.json` | Cantidad de paquetes, total de apuestas, RTP global y tiempo |
+| `paquetes/paquete_000001.json` | Solo cuando se activa `--split-files`: archivo por paquete |
+
+Por defecto, cada linea de `paquetes.jsonl` trae los **100 registros completos**, incluidas sus matrices 6x6 y pagos. El modo compacto reduce significativamente el tamaño: usa 100 IDs que referencian el catalogo separado.
+
+Los archivos se escriben progresivamente, sin almacenar todos los paquetes en la RAM. Una ejecucion nueva sobre el mismo directorio reemplaza los archivos principales; para conservar ejecuciones anteriores elige otra carpeta.
 
 ## Pruebas
 
 ```bash
-cargo test
+cargo test --all-targets
 cargo clippy --all-targets -- -D warnings
 ```
 
-Las pruebas verifican la fracción exacta del RTP, premios deducidos de la matriz, premios máximos, rechazos de entradas inválidas, símbolos válidos, los 128 saldos distintos y la suspensión de apuestas por insuficiencia de saldo.
+GitHub Actions verifica las 128 matrices distintas, los conteos de cada nivel de premios, el RTP teorico exacto, 100 IDs sin repeticion por paquete, los JSON y CSV, la reutilizacion del catalogo y el ejecutable Windows.
 
-La carpeta `.github/workflows` contiene una verificación automática en GitHub Actions.
+**Alcance:** simulador matematico y generador local de resultados. No es un RNG certificado para apuestas reales; para operar con dinero real hace falta auditoria y certificacion adecuadas.
