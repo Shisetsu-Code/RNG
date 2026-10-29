@@ -29,12 +29,12 @@ struct FullPackage<'a> {
 
 fn help() {
     println!(
-        "RNG 6x6 | 8192 tipos de resultado | 100 apuestas por paquete | RTP 96,5%\n\
+        "RNG 6x6 | 128000 tipos de resultado | 100 apuestas por paquete | RTP 96,5%\n\
          \n\
          Uso: rng-grid.exe --packages N [opciones]\n\
          --packages N          Cantidad de paquetes de 100 apuestas\n\
          --out DIRECTORIO      Donde guardar resultados (default: salida_rng)\n\
-         --reuse-catalog JSON  Utilizar el catalogo previo de 8192 matrices\n\
+         --reuse-catalog JSON  Utilizar el catalogo previo de 128000 matrices\n\
          --compact             Guardar solo IDs (predeterminado)\n\
          --full                Incluir las matrices 6x6 en cada apuesta\n\
          --split-files         Ademas, generar paquete_000001.json, etc.\n\
@@ -42,7 +42,7 @@ fn help() {
          \n\
          Sin argumentos pregunta la cantidad de paquetes.\n\
          Cada paquete contiene 100 extracciones independientes, uniformes\n\
-         sobre 8192 tipos. Los IDs pueden aparecer varias veces.\n\
+         sobre 128000 tipos. Los IDs pueden aparecer varias veces.\n\
          El RTP de 96,5% es matematico; NO se fuerza por paquete.\n\
          No existen cuentas ni saldos en este programa."
     );
@@ -50,7 +50,7 @@ fn help() {
 
 fn prompt_packages() -> Result<usize, Box<dyn Error>> {
     println!("==========================================");
-    println!(" RNG 6x6 | 8192 tipos | RTP 96,5%");
+    println!(" RNG 6x6 | 128000 tipos | RTP 96,5%");
     println!(" 100 apuestas en cada paquete");
     println!("==========================================");
     print!("Cuantos paquetes de 100 apuestas queres generar? [100]: ");
@@ -143,10 +143,10 @@ fn parse_args() -> Result<(Options, bool), Box<dyn Error>> {
 }
 
 fn write_catalog(catalog: &Catalog, output: &Path) -> Result<(), Box<dyn Error>> {
-    let file = BufWriter::new(File::create(output.join("catalogo_8192.json"))?);
+    let file = BufWriter::new(File::create(output.join("catalogo_128000.json"))?);
     serde_json::to_writer_pretty(file, catalog)?;
 
-    let mut csv = BufWriter::new(File::create(output.join("catalogo_8192.csv"))?);
+    let mut csv = BufWriter::new(File::create(output.join("catalogo_128000.csv"))?);
     writeln!(
         csv,
         "tipo_id,parejas_horizontales,retorno_bps,retorno_multiplicador,fila_1,fila_2,fila_3,fila_4,fila_5,fila_6"
@@ -230,8 +230,8 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
     }
 
     let mut total_return_bps = 0_u128;
-    let mut frequencies = [0_u64; TYPES];
-    let mut last_seen_in_package = [0_usize; TYPES];
+    let mut frequencies = vec![0_u64; TYPES];
+    let mut last_seen_in_package = vec![0_usize; TYPES];
     let mut duplicates_within_packages = 0_u128;
     let mut packages_with_duplicates = 0_usize;
 
@@ -332,7 +332,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
         "theoretical_rtp_percent": 96.5,
         "observed_rtp_percent": rtp_observed_percent,
         "total_return_in_bet_units": total_return_bps as f64 / BASIS_POINTS as f64,
-        "sampling": "100 independent CSPRNG draws uniformly from 8192 types, with replacement",
+        "sampling": "100 independent uniform CSPRNG draws from 128000 types (replacement enabled)",
         "types_observed": covered_types,
         "expected_occurrences_per_type": expected_per_type,
         "minimum_occurrences_per_type": min_frequency,
@@ -359,7 +359,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
     println!("Retorno total: {:.4} unidades de apuesta", total_return_bps as f64 / BASIS_POINTS as f64);
     println!("Tiempo: {:.3} segundos", elapsed.as_secs_f64());
     println!("Directorio: {}", options.output.canonicalize()?.display());
-    println!("Archivos: catalogo_8192.json, catalogo_8192.csv, paquetes.jsonl,");
+    println!("Archivos: catalogo_128000.json, catalogo_128000.csv, paquetes.jsonl,");
     println!("          resumen_paquetes.csv, frecuencias_tipos.csv, reporte.json");
     if options.split_files {
         println!("          + {} archivos individuales en /paquetes", options.packages);
