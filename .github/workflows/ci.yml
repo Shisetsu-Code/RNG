@@ -81,6 +81,19 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or $output -notcontains 'GUI_SELF_TEST_OK') {
             throw "GUI self-test failed: $output"
           }
+          $env:RNG_GUI_TEST_FORM = '1'
+          $stdoutPath = Join-Path $env:RUNNER_TEMP 'rng-gui-form-stdout.txt'
+          $stderrPath = Join-Path $env:RUNNER_TEMP 'rng-gui-form-stderr.txt'
+          $proc = Start-Process -FilePath powershell.exe -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-STA', '-File', '.\RNG-6x6-GUI.ps1') -WorkingDirectory $PWD.Path -WindowStyle Hidden -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -PassThru
+          if (-not $proc.WaitForExit(20000)) {
+            $proc.Kill()
+            throw "GUI control-construction test timed out"
+          }
+          $formOutput = Get-Content $stdoutPath -Raw
+          $formErrors = Get-Content $stderrPath -Raw
+          if ($proc.ExitCode -ne 0 -or $formOutput -notmatch 'GUI_FORM_CREATED_OK') {
+            throw "GUI control-construction test failed: $formOutput $formErrors"
+          }
       - name: Prepare portable Windows folder
         shell: pwsh
         run: |
