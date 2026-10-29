@@ -7,6 +7,7 @@
 
 use crate::{BASIS_POINTS, BETS_PER_PACKAGE, Catalog, TYPES};
 use rand::{Rng, RngExt};
+use rand::seq::SliceRandom;
 use serde::Serialize;
 use std::collections::HashSet;
 use std::time::Instant;
@@ -88,15 +89,18 @@ pub fn sample_trace<R: Rng + ?Sized>(
 ) -> Trace {
     match mode {
         Mode::WithoutReplacement => {
-            // IMPORTANT: attack the REAL package generator, not a reimplementation.
+            // Contrafactual inseguro (NO es el generador principal):
+            // reordenar 8192 IDs y tomar los primeros 100 sin reposicion.
+            let mut ids: Vec<u16> = (1..=TYPES as u16).collect();
+            ids.shuffle(rng);
+            std::array::from_fn(|index| u32::from(ids[index]))
+        }
+        Mode::WithReplacement => {
+            // Auditar exactamente el generador de paquetes principal.
             let package = crate::generate_package(catalog, number as usize + 1, rng);
             std::array::from_fn(|index| u32::from(package.outcome_ids[index]))
         }
-        Mode::WithReplacement => {
-            std::array::from_fn(|_| rng.random_range(1_u32..=(TYPES as u32)))
-        }
-        // CONTROL NEGATIVO para demostrar que los predictores encuentran
-        // implementaciones rotas. Nunca utilizarlo en produccion.
+        // Control deliberadamente debil. No debe usarse para producir apuestas.
         Mode::WeakCounter => {
             std::array::from_fn(|index| ((number as usize + index) % TYPES + 1) as u32)
         }
@@ -113,7 +117,7 @@ pub fn conditional_bps(trace: &Trace, catalog: &Catalog, prefix: usize) -> u32 {
     (total - observed) / (TYPES - prefix) as u32
 }
 
-/// Igual que conditional_bps, pero sin asumir reemplazo: los 128 tipos
+/// Igual que conditional_bps, pero sin asumir reemplazo: los 8192 tipos
 /// son siempre posibles al iniciar cada giro.
 pub fn independent_bps(catalog: &Catalog) -> u32 {
     catalog
@@ -284,7 +288,7 @@ pub fn audit<R: Rng + ?Sized>(
         );
     } else if mode == Mode::WithReplacement {
         observations.push(
-            "Muestreo independiente: cada giro mantiene 128 posibilidades y 96,5% de RTP \
+            "Muestreo independiente: cada giro mantiene 8192 posibilidades y 96,5% de RTP \
              condicional; se permiten repeticiones dentro del paquete."
                 .to_owned(),
         );
@@ -344,8 +348,8 @@ mod tests {
             .unwrap();
         assert!(report.structural_exploit_detected);
         assert_eq!(report.duplicates_within_packages, 0);
-        assert_eq!(report.checkpoints[0].possible_next_types, 128);
-        assert_eq!(report.checkpoints[5].possible_next_types, 29);
+        assert_eq!(report.checkpoints[0].possible_next_types, 8192);
+        assert_eq!(report.checkpoints[5].possible_next_types, 8093);
         assert!(report.checkpoints.iter().any(|checkpoint| {
             checkpoint.conditional_positive_ev_opportunities > 0
         }));
@@ -358,7 +362,7 @@ mod tests {
         let report = audit(Mode::WithReplacement, 128, &catalog, &mut rng, |_| Ok(()))
             .unwrap();
         assert!(!report.structural_exploit_detected);
-        assert_eq!(report.checkpoints[5].possible_next_types, 128);
+        assert_eq!(report.checkpoints[5].possible_next_types, 8192);
         assert!(report.checkpoints.iter().all(|cp| {
             cp.conditional_positive_ev_opportunities == 0
                 && (cp.mean_conditional_rtp_percent - 96.5).abs() < f64::EPSILON * 100.0
@@ -389,7 +393,7 @@ mod tests {
             }).sum();
             assert_eq!(
                 conditional_bps(&trace, &catalog, checkpoint),
-                (1_235_200 - sum_before) / (128 - checkpoint) as u32
+                (79_052_800 - sum_before) / (8192 - checkpoint) as u32
             );
         }
     }
