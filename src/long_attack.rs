@@ -234,6 +234,20 @@ pub fn observe_long_sequence<R: Rng + ?Sized>(
     observations: u64,
     rng: &mut R,
 ) -> Result<LongAttackReport, String> {
+    observe_long_sequence_from(catalog, mode, observations, |package_number| {
+        Ok(sample_trace(mode, package_number, catalog, rng))
+    })
+}
+
+/// Audita una secuencia REAL de paquetes, por ejemplo, leyendo un JSONL
+/// ya generado. El atacante solo ve los 100 IDs de cada paquete y
+/// mantiene training / holdout sin cargar toda la secuencia en RAM.
+pub fn observe_long_sequence_from(
+    catalog: &Catalog,
+    mode: Mode,
+    observations: u64,
+    mut next_package: impl FnMut(u64) -> Result<crate::audit::Trace, String>,
+) -> Result<LongAttackReport, String> {
     crate::validate_catalog(catalog)?;
     if observations < 1000 {
         return Err("--long-bets debe ser al menos 1000".to_owned());
@@ -281,7 +295,7 @@ pub fn observe_long_sequence<R: Rng + ?Sized>(
     let mut package_no = 0_u64;
     let mut current_index = 0_u64;
     while current_index < observations {
-        let trace = sample_trace(mode, package_no, catalog, rng);
+        let trace = next_package(package_no)?;
         package_no += 1;
         for (offset, &id) in trace.iter().enumerate() {
             if current_index >= observations {
