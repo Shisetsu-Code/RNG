@@ -49,7 +49,7 @@ impl Config {
         if self.spins_per_wallet == 0 {
             return Err("spins_per_wallet debe ser mayor que cero");
         }
-        if self.bet < BET_QUANTUM || !self.bet.is_multiple_of(BET_QUANTUM) {
+        if self.bet < BET_QUANTUM || self.bet % BET_QUANTUM != 0 {
             return Err("bet debe ser un multiplo positivo de 48 unidades minimas");
         }
         if self.balance_step == 0 {
@@ -103,7 +103,7 @@ fn leading_matches(row: &[u8; COLS]) -> usize {
 /// La apuesta total se divide en seis; cada apuesta por línea debe ser
 /// múltiplo de ocho para representar exactamente el premio 115,625x.
 pub fn evaluate(grid: Grid, bet: u64) -> Result<Spin, &'static str> {
-    if bet < BET_QUANTUM || !bet.is_multiple_of(BET_QUANTUM) {
+    if bet < BET_QUANTUM || bet % BET_QUANTUM != 0 {
         return Err("la apuesta debe ser multiplo de 48");
     }
     if grid.iter().flatten().any(|&symbol| symbol >= SYMBOLS) {
