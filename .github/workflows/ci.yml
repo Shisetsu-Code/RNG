@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   test:
-    name: Unit tests, lint and 128-wallet smoke test
+    name: Rust tests, lint and interactive smoke test (Linux)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -27,7 +27,53 @@ jobs:
         run: cargo test --all-targets
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
-      - name: Verify 128 unique-wallet CSV
+      - name: Verify 128 unique-wallet CSV with total bets
         run: |
-          cargo run --release -- --spins 100 --summary-only --csv report.csv
+          cargo run --release -- --total-spins 257 --summary-only --csv report.csv
           test "$(wc -l < report.csv)" -eq 129
+          test "$(awk -F, 'NR>1 {n+=$4} END {print n}' report.csv)" -eq 257
+      - name: Verify interactive prompts through standard input
+        run: |
+          printf '257\n1\n48\n1000000\n10000\nn\n' | cargo run --release -- > interactive.log
+          grep -q 'Apuestas realizadas: 257' interactive.log
+
+  windows-portable:
+    name: Build and test Windows portable .exe (x64)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install Rust stable
+        shell: pwsh
+        run: |
+          rustup update stable
+          rustup default stable
+      - name: Test project
+        run: cargo test --all-targets
+      - name: Compile release executable
+        run: cargo build --release
+      - name: Smoke test 128 balances and 257 total bets
+        shell: pwsh
+        run: |
+          .\target\release\rng-grid.exe --total-spins 257 --summary-only --csv report.csv
+          $rows = @(Import-Csv .\report.csv)
+          if ($rows.Count -ne 128) { throw "Expected 128 wallets, got $($rows.Count)" }
+          $count = ($rows | Measure-Object -Property spins -Sum).Sum
+          if ($count -ne 257) { throw "Expected 257 bets, got $count" }
+      - name: Prepare portable Windows folder
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item target\release\rng-grid.exe dist\RNG-6x6.exe
+          Copy-Item INICIAR-WINDOWS.cmd dist\INICIAR-WINDOWS.cmd
+          Copy-Item README.md dist\README.md
+      - name: Publish Windows executable artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: RNG-6x6-Windows-x64
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
