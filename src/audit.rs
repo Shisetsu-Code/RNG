@@ -285,7 +285,7 @@ pub fn audit<R: Rng + ?Sized>(
             report.observed_prefix > 0 && report.possible_next_types < TYPES
         });
     // Si en el peor caso todos los 99 sorteos observados pagaron 0,
-    // solo se redujo el denominador de 128000 a 8093. Con la tabla actual,
+    // solo se redujo el denominador de 128000 a 127901. Con la tabla actual,
     // es matematicamente imposible que el RTP condicional supere el 100%.
     let legacy_max_conditional_rtp_percent = if mode == Mode::WithoutReplacement {
         Some(100.0 * crate::RTP_TARGET_BPS as f64 * TYPES as f64
@@ -375,7 +375,7 @@ mod tests {
         assert!(report.structural_exploit_detected);
         assert_eq!(report.duplicates_within_packages, 0);
         assert_eq!(report.checkpoints[0].possible_next_types, 128000);
-        assert_eq!(report.checkpoints[5].possible_next_types, 8093);
+        assert_eq!(report.checkpoints[5].possible_next_types, 127901);
         // Con 128000 tipos, observar 99 de ellos aporta poca informacion:
         // el techo condicional es 96,575%, asi que no hay EV positivo.
         // Aun existe una pequeña fuga de informacion acerca de los IDs.
@@ -428,7 +428,7 @@ mod tests {
             }).sum();
             assert_eq!(
                 conditional_bps(&trace, &catalog, checkpoint),
-                (1_235_200_000 - sum_before) / (128000 - checkpoint) as u32
+                (1_235_200_000 - sum_before) / (TYPES - checkpoint) as u32
             );
         }
     }
