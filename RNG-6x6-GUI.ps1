@@ -1,9 +1,21 @@
 param([switch]$SelfTest)
 # Native Windows Forms interface for the Rust RNG simulator.
 $ErrorActionPreference = 'Stop'
+function TraceGuiStartup {
+    param([string]$Stage)
+    if ($env:RNG_GUI_TEST_FORM -eq '1') {
+        [System.IO.File]::AppendAllText(
+            (Join-Path $env:TEMP 'RNG-GUI-startup.log'),
+            ($Stage + [Environment]::NewLine)
+        )
+    }
+}
+TraceGuiStartup '01-entry'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+TraceGuiStartup '02-forms-loaded'
 [System.Windows.Forms.Application]::EnableVisualStyles()
+TraceGuiStartup '03-visual-styles'
 if ($SelfTest) {
     Write-Output 'GUI_SELF_TEST_OK'
     exit 0
@@ -21,7 +33,9 @@ if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
     exit 1
 }
 
+TraceGuiStartup '04-before-form'
 $form = New-Object System.Windows.Forms.Form
+TraceGuiStartup '05-after-form'
 $form.Text = 'RNG 6x6 | Simulador local de 128 saldos'
 $form.ClientSize = New-Object System.Drawing.Size(740, 670)
 $form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen
@@ -51,6 +65,7 @@ function AddTextBox {
     return $box
 }
 
+TraceGuiStartup '06-before-controls'
 $title = AddLabel 'SIMULADOR RNG 6 x 6' 18
 $title.Font = New-Object System.Drawing.Font('Segoe UI', 17, [System.Drawing.FontStyle]::Bold)
 $title.Height = 42
@@ -123,6 +138,7 @@ $output.Size = New-Object System.Drawing.Size(680, 157)
 $output.Text = "Elige una cantidad y haz clic en EJECUTAR SIMULACION." + $nl + "Puedes cancelar una ejecucion desde esta ventana." + $nl + "Un total puede ser menor al solicitado si no alcanza el saldo."
 $form.Controls.Add($output)
 
+TraceGuiStartup '07-controls-constructed'
 $script:process = $null
 $script:startedAt = [datetime]::MinValue
 
@@ -259,4 +275,5 @@ if ($env:RNG_GUI_TEST_FORM -eq '1') {
     $form.Dispose()
     exit 0
 }
+TraceGuiStartup '08-events-registered'
 [void][System.Windows.Forms.Application]::Run($form)
