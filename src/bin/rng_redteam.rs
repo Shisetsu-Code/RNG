@@ -1,7 +1,8 @@
 use rng_grid::audit::{Mode, ModeReport, audit, validate_trace};
 #[cfg(feature = "gpu")]
 use rng_grid::audit::{CHECKPOINTS, Trace};
-use rng_grid::{Catalog, generate_catalog, validate_catalog};
+use rng_grid::{Catalog, TYPES, generate_catalog, validate_catalog};
+use rng_grid::long_attack::{LongAttackReport, observe_long_sequence};
 use serde::Serialize;
 use std::env;
 use std::error::Error;
@@ -25,6 +26,7 @@ enum Selection {
 #[derive(Serialize)]
 struct SecurityReport {
     version: u32,
+    long_sequence: Vec<LongAttackReport>,
     tested_packages_per_mode: u64,
     generated_bets_per_mode: u128,
     catalog_size: usize,
@@ -54,6 +56,8 @@ struct Options {
     catalog: Option<PathBuf>,
     gpu_enabled: bool,
     gpu_batch: usize,
+    long_bets: u64,
+    long_only: bool,
 }
 
 impl Default for Options {
@@ -65,6 +69,8 @@ impl Default for Options {
             catalog: None,
             gpu_enabled: false,
             gpu_batch: 50_000,
+            long_bets: 1_000_000,
+            long_only: false,
         }
     }
 }
@@ -74,12 +80,14 @@ fn usage() {
         "LABORATORIO RNG 6x6: GENERADOR vs ATACANTE\n\
          \n\
          Uso: rng_redteam.exe [opciones]\n\
-         --packages N               Paquetes de 100 apuestas por modelo (default: 10000)\n\
+         --packages N               Paquetes cortos por modelo (default 10000)\n\
+         --long-bets N              Secuencia larga continua por modelo (default 1000000)\n\
+         --long-only                Omite los tests cortos de 100 apuestas\n\
          --mode all                  3 modelos: actual, historico y control debil\n\
          --mode without              Modelo antiguo: 100 sin reposicion\n\
          --mode independent          Motor ACTUAL: 100 sorteos independientes\n\
          --mode weak                 Control deliberadamente inseguro (secuencia +1)\n\
-         --catalog archivo.json      Reutiliza catalogo_128.json existente\n\
+         --catalog archivo.json      Reutiliza catalogo_128000.json existente\n\
          --out carpeta               Directorio de informes (default: auditoria_rng)\n\
          --gpu                       GPU para riesgo historico sin reposicion\n\
          --gpu-batch N               Tamaño de lote GPU en paquetes (default: 50000)\n\
@@ -125,6 +133,11 @@ fn parse_args() -> Result<Option<Options>, Box<dyn Error>> {
                     args.next().ok_or("falta archivo de catalogo")?,
                 ));
             }
+            "--long-bets" => {
+                options.long_bets = args
+                    .next().ok_or("falta numero para --long-bets")?.parse()?;
+            }
+            "--long-only" => options.long_only = true,
             "--gpu" => options.gpu_enabled = true,
             "--gpu-batch" => {
                 options.gpu_batch = args
@@ -135,8 +148,14 @@ fn parse_args() -> Result<Option<Options>, Box<dyn Error>> {
             _ => return Err(format!("opcion desconocida: {arg}").into()),
         }
     }
-    if options.packages == 0 || options.gpu_batch == 0 {
-        return Err("--packages y --gpu-batch deben ser positivos".into());
+    if (!options.long_only && options.packages == 0) || options.gpu_batch == 0 {
+        return Err("--packages (salvo --long-only) y --gpu-batch deben ser positivos".into());
+    }
+    if options.long_bets > 0 && options.long_bets < 1000 {
+        return Err("--long-bets debe ser 0 (desactivado) o al menos 1000".into());
+    }
+    if options.long_only && options.long_bets == 0 {
+        return Err("--long-only requiere --long-bets > 0".into());
     }
     if options.gpu_batch > 100_000 {
         return Err("--gpu-batch debe ser como maximo 100000 (limite de memoria)".into());
@@ -199,6 +218,70 @@ fn write_csv(reports: &[ModeReport], directory: &Path) -> Result<(), Box<dyn Err
                     .map(|x| format!("{x:.5}")).unwrap_or_default(),
                 checkpoint.selective_realized_rtp_percent
                     .map(|x| format!("{x:.5}")).unwrap_or_default(),
+            ])?;
+        }
+    }
+    Ok(())
+}
+
+fn write_long_csv(
+    reports: &[LongAttackReport],
+    directory: &Path,
+) -> Result<(), Box<dyn Error>> {
+    let mut csv = csv_writer::Writer::new(
+        File::create(directory.join("secuencias_largas_predictores.csv"))?,
+    );
+    csv.write(&[
+        "modelo", "analisis", "predictor", "muestras", "aciertos",
+        "precision_porcentaje", "esperado_azar_porcentaje",
+        "exceso_z_aproximado", "alerta",
+    ])?;
+    for report in reports {
+        for p in &report.id_predictors {
+            csv.write(&[
+                report.mode.label().to_owned(),
+                "ID".to_owned(),
+                p.name.clone(),
+                p.evaluated.to_string(),
+                p.hits.to_string(),
+                format!("{:.8}", p.accuracy_percent),
+                format!("{:.8}", p.random_baseline_percent),
+                format!("{:.5}", p.excess_hits_z_approx),
+                p.statistically_significant_excess.to_string(),
+            ])?;
+        }
+        for p in &report.payout_class_predictors {
+            csv.write(&[
+                report.mode.label().to_owned(),
+                "clase_premio".to_owned(),
+                p.name.clone(),
+                p.evaluated.to_string(),
+                String::new(),
+                format!("{:.8}", p.accuracy_percent),
+                String::new(),
+                format!("{:.5}", p.improvement_z_approx),
+                p.statistically_significant_improvement.to_string(),
+            ])?;
+        }
+    }
+    let mut lag_csv = csv_writer::Writer::new(
+        File::create(directory.join("secuencias_largas_correlaciones.csv"))?,
+    );
+    lag_csv.write(&[
+        "modelo", "lag", "muestras", "ids_iguales", "esperado_azar",
+        "correlacion", "z_correlacion", "alarma",
+    ])?;
+    for report in reports {
+        for lag in &report.lags {
+            lag_csv.write(&[
+                report.mode.label().to_owned(),
+                lag.lag.to_string(),
+                lag.comparisons.to_string(),
+                lag.same_id_hits.to_string(),
+                format!("{:.8}", lag.expected_same_id_hits),
+                format!("{:.9}", lag.numeric_id_correlation),
+                format!("{:.5}", lag.numeric_correlation_z_approx),
+                lag.significant_correlation.to_string(),
             ])?;
         }
     }
@@ -348,9 +431,10 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
     let mut rng = rand::rng();
 
     println!("LABORATORIO: GENERADOR vs ATACANTE");
-    println!("8192 matrices 6x6 | RTP teorico: 96,5% | {} paquetes por modelo", options.packages);
+    println!("{TYPES} matrices 6x6 | RTP teorico: 96,5% | {} paquetes cortos y {} observaciones largas por modelo", options.packages, options.long_bets);
     for &mode in modes(options.mode) {
-        println!("\nAnalizando modelo {}...", mode.label());
+        if options.long_only { continue; }
+        println!("\nAnalizando paquetes cortos del modelo {}...", mode.label());
 
         #[cfg(feature = "gpu")]
         if options.gpu_enabled && mode == Mode::WithoutReplacement {
@@ -371,8 +455,39 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
         reports.push(report);
     }
 
+    let mut long_reports = Vec::new();
+    if options.long_bets >= 1000 {
+        for &mode in modes(options.mode) {
+            println!(
+                "\nAtacante de secuencias largas: modelo {} / {} giros seguidos...",
+                mode.label(), options.long_bets
+            );
+            let long = observe_long_sequence(&catalog, mode, options.long_bets, &mut rng)?;
+            println!(
+                "  Training {} | Test {} | alertas={} | tiempo {:.3}s",
+                long.training_observations,
+                long.holdout_observations,
+                long.any_flagged_statistical_pattern,
+                long.elapsed_seconds
+            );
+            for p in &long.id_predictors {
+                println!(
+                    "  Predictor {:<50} aciertos {:>6}/{} (azar {:.4}%; z={:.2})",
+                    p.name, p.hits, p.evaluated, p.random_baseline_percent,
+                    p.excess_hits_z_approx
+                );
+            }
+            long_reports.push(long);
+        }
+        serde_json::to_writer_pretty(
+            File::create(options.output.join("secuencias_largas.json"))?,
+            &long_reports,
+        )?;
+        write_long_csv(&long_reports, &options.output)?;
+    }
+
     let notes = vec![
-        "Motor actual: cada apuesta extrae de manera uniforme un tipo entre 8192,          con reposicion e independencia entre apuestas."
+        "Motor actual: cada apuesta extrae de manera uniforme un tipo entre 128000,          con reposicion e independencia entre apuestas."
             .to_owned(),
         "El reparto de tipos es uniforme en esperanza. No se puede garantizar          que un conjunto finito tenga frecuencias iguales sin introducir          dependencia y potencial fuga de informacion."
             .to_owned(),
@@ -387,10 +502,11 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
     ];
 
     let report = SecurityReport {
-        version: 1,
+        version: 2,
+        long_sequence: long_reports,
         tested_packages_per_mode: options.packages,
         generated_bets_per_mode: u128::from(options.packages) * 100,
-        catalog_size: 8192,
+        catalog_size: TYPES,
         catalog_rtp_percent: 96.5,
         gpu: gpu_report,
         runs: reports,
@@ -434,6 +550,10 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
             gpu.adapter, gpu.score_samples, gpu.benchmark_compute_seconds,
             gpu.cpu_gpu_checks, gpu.cpu_gpu_mismatches
         );
+    }
+    if options.long_bets >= 1000 {
+        println!("\nInforme largo: {}", options.output.join("secuencias_largas.json").display());
+        println!("CSV predictivo: {}", options.output.join("secuencias_largas_predictores.csv").display());
     }
     println!("\nInforme: {}", output.canonicalize()?.display());
     println!(
