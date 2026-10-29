@@ -7,8 +7,8 @@
 
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let package = gid.x;
-    let offset = package * 100u;
+    let batch_index = gid.x;
+    let offset = batch_index * 100u;
     if offset >= arrayLength(&ids) {
         return;
     }
@@ -20,12 +20,12 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     var count = 128u;
 
     for (var k: u32 = 0u; k < 100u; k = k + 1u) {
-        if (k == 0u)  { expected[package * 6u + 0u] = remaining / count; }
-        if (k == 25u) { expected[package * 6u + 1u] = remaining / count; }
-        if (k == 50u) { expected[package * 6u + 2u] = remaining / count; }
-        if (k == 75u) { expected[package * 6u + 3u] = remaining / count; }
-        if (k == 90u) { expected[package * 6u + 4u] = remaining / count; }
-        if (k == 99u) { expected[package * 6u + 5u] = remaining / count; }
+        if (k == 0u)  { expected[batch_index * 6u + 0u] = remaining / count; }
+        if (k == 25u) { expected[batch_index * 6u + 1u] = remaining / count; }
+        if (k == 50u) { expected[batch_index * 6u + 2u] = remaining / count; }
+        if (k == 75u) { expected[batch_index * 6u + 3u] = remaining / count; }
+        if (k == 90u) { expected[batch_index * 6u + 4u] = remaining / count; }
+        if (k == 99u) { expected[batch_index * 6u + 5u] = remaining / count; }
 
         let id = ids[offset + k];
         remaining = remaining - payouts[id - 1u];
