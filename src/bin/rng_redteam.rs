@@ -1,4 +1,6 @@
-use rng_grid::audit::{CHECKPOINTS, Mode, ModeReport, Trace, audit, validate_trace};
+use rng_grid::audit::{Mode, ModeReport, audit, validate_trace};
+#[cfg(feature = "gpu")]
+use rng_grid::audit::{CHECKPOINTS, Trace};
 use rng_grid::{Catalog, generate_catalog, validate_catalog};
 use serde::Serialize;
 use std::env;
@@ -339,7 +341,10 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
     fs::create_dir_all(&options.output)?;
     let catalog = load_catalog(options.catalog.as_deref())?;
     let mut reports = Vec::new();
+    #[cfg(feature = "gpu")]
     let mut gpu_report = None;
+    #[cfg(not(feature = "gpu"))]
+    let gpu_report: Option<GpuReport> = None;
     let mut rng = rand::rng();
 
     println!("LABORATORIO: GENERADOR vs ATACANTE");
