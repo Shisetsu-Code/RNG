@@ -7,7 +7,6 @@
 
 use crate::{BASIS_POINTS, BETS_PER_PACKAGE, Catalog, TYPES};
 use rand::{Rng, RngExt};
-use rand::seq::SliceRandom;
 use serde::Serialize;
 use std::collections::HashSet;
 use std::time::Instant;
@@ -81,13 +80,17 @@ pub struct ModeReport {
 /// valor condicional. Para no gastar memoria, conservar solo lotes limitados.
 pub type Trace = [u32; BETS_PER_PACKAGE];
 
-pub fn sample_trace<R: Rng + ?Sized>(mode: Mode, number: u64, rng: &mut R) -> Trace {
+pub fn sample_trace<R: Rng + ?Sized>(
+    mode: Mode,
+    number: u64,
+    catalog: &Catalog,
+    rng: &mut R,
+) -> Trace {
     match mode {
         Mode::WithoutReplacement => {
-            let mut ids: [u16; TYPES] =
-                std::array::from_fn(|index| (index + 1) as u16);
-            ids.shuffle(rng);
-            std::array::from_fn(|index| u32::from(ids[index]))
+            // IMPORTANT: attack the REAL package generator, not a reimplementation.
+            let package = crate::generate_package(catalog, number as usize + 1, rng);
+            std::array::from_fn(|index| u32::from(package.outcome_ids[index]))
         }
         Mode::WithReplacement => {
             std::array::from_fn(|_| rng.random_range(1_u32..=(TYPES as u32)))
@@ -141,7 +144,7 @@ pub fn audit<R: Rng + ?Sized>(
     let mut paid = 0_u128;
 
     for package_index in 0..packages {
-        let trace = sample_trace(mode, package_index, rng);
+        let trace = sample_trace(mode, package_index, catalog, rng);
         let mut used = [false; TYPES];
         let mut sum_remaining: u32 =
             catalog.outcomes.iter().map(|outcome| outcome.payout_bps).sum();
@@ -376,7 +379,7 @@ mod tests {
     fn exact_ev_math_and_gpu_reference() {
         let mut rng = rand::rng();
         let catalog = crate::generate_catalog(&mut rng).unwrap();
-        let trace = sample_trace(Mode::WithoutReplacement, 1, &mut rng);
+        let trace = sample_trace(Mode::WithoutReplacement, 1, &catalog, &mut rng);
         validate_trace(&trace, Mode::WithoutReplacement).unwrap();
         assert_eq!(conditional_bps(&trace, &catalog, 0), 9_650);
         assert_eq!(independent_bps(&catalog), 9_650);
