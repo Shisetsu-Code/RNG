@@ -66,6 +66,7 @@ jobs:
       - name: Validate Windows GUI script and initialize Windows Forms
         shell: pwsh
         run: |
+          Copy-Item target\release\rng-grid.exe .\RNG-6x6-CLI.exe
           $tokens = $null
           $errors = $null
           [System.Management.Automation.Language.Parser]::ParseFile(
