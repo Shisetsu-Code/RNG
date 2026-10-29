@@ -190,7 +190,7 @@ fn encode_package<W: Write>(
             bets: package
                 .outcome_ids
                 .iter()
-                .map(|&id| &catalog.outcomes[usize::from(id) - 1])
+                .map(|&id| &catalog.outcomes[id as usize - 1])
                 .collect(),
             total_payout_bps: package.total_payout_bps,
         };
@@ -250,7 +250,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
         debug_assert_eq!(package.outcome_ids.len(), BETS_PER_PACKAGE);
         let mut unique_in_package = 0_usize;
         for &id in &package.outcome_ids {
-            let key = usize::from(id) - 1;
+            let key = id as usize - 1;
             let slot = &mut frequencies[key];
             *slot = slot.checked_add(1).ok_or("desbordamiento de frecuencias")?;
             if last_seen_in_package[key] != index {
