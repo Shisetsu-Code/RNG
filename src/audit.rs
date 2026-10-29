@@ -108,7 +108,7 @@ pub fn sample_trace<R: Rng + ?Sized>(
         Mode::WithReplacement => {
             // Auditar exactamente el generador de paquetes principal.
             let package = crate::generate_package(catalog, number as usize + 1, rng);
-            std::array::from_fn(|index| u32::from(package.outcome_ids[index]))
+            std::array::from_fn(|index| package.outcome_ids[index])
         }
         // Control deliberadamente debil. No debe usarse para producir apuestas.
         Mode::WeakCounter => {
