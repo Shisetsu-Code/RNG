@@ -7,9 +7,9 @@
 
 use crate::{BASIS_POINTS, BETS_PER_PACKAGE, Catalog, TYPES};
 use rand::Rng;
-use rand::seq::SliceRandom;
+use rand::RngExt;
 use serde::Serialize;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 pub const CHECKPOINTS: [usize; 6] = [0, 25, 50, 75, 90, 99];
@@ -91,11 +91,19 @@ pub fn sample_trace<R: Rng + ?Sized>(
 ) -> Trace {
     match mode {
         Mode::WithoutReplacement => {
-            // Contrafactual inseguro (NO es el generador principal):
-            // reordenar 8192 IDs y tomar los primeros 100 sin reposicion.
-            let mut ids: Vec<u16> = (1..=TYPES as u16).collect();
-            ids.shuffle(rng);
-            std::array::from_fn(|index| u32::from(ids[index]))
+            // Fisher-Yates parcial y disperso: solamente 100 sorteos, O(100)
+            // memoria y O(100) operaciones, incluso con 128000 tipos.
+            // Contrafactual del modelo historico, NO la produccion.
+            let mut swapped: HashMap<usize, u32> = HashMap::with_capacity(200);
+            std::array::from_fn(|index| {
+                let selected = rng.random_range(index..TYPES);
+                let picked_id = swapped.get(&selected).copied()
+                    .unwrap_or(selected as u32 + 1);
+                let current_id = swapped.get(&index).copied()
+                    .unwrap_or(index as u32 + 1);
+                swapped.insert(selected, current_id);
+                picked_id
+            })
         }
         Mode::WithReplacement => {
             // Auditar exactamente el generador de paquetes principal.
@@ -119,7 +127,7 @@ pub fn conditional_bps(trace: &Trace, catalog: &Catalog, prefix: usize) -> u32 {
     (total - observed) / (TYPES - prefix) as u32
 }
 
-/// Igual que conditional_bps, pero sin asumir reemplazo: los 8192 tipos
+/// Igual que conditional_bps, pero sin asumir reemplazo: los 128000 tipos
 /// son siempre posibles al iniciar cada giro.
 pub fn independent_bps(catalog: &Catalog) -> u32 {
     catalog
@@ -143,7 +151,9 @@ pub fn audit<R: Rng + ?Sized>(
     crate::validate_catalog(catalog)?;
 
     let start = Instant::now();
-    let mut frequency = [0_u64; TYPES];
+    let mut frequency = vec![0_u64; TYPES];
+    let catalog_sum_bps: u32 = catalog.outcomes.iter().map(|o| o.payout_bps).sum();
+    let baseline_bps = catalog_sum_bps / TYPES as u32;
     let mut checkpoints: [CheckpointAccumulator; CHECKPOINTS.len()] =
         std::array::from_fn(|_| CheckpointAccumulator::default());
     let mut duplicates = 0_u64;
@@ -151,9 +161,9 @@ pub fn audit<R: Rng + ?Sized>(
 
     for package_index in 0..packages {
         let trace = sample_trace(mode, package_index, catalog, rng);
-        let mut used = [false; TYPES];
-        let mut sum_remaining: u32 =
-            catalog.outcomes.iter().map(|outcome| outcome.payout_bps).sum();
+        let mut used: HashSet<u32> = HashSet::with_capacity(BETS_PER_PACKAGE);
+        let mut first_unused = 1_u32;
+        let mut sum_remaining: u32 = catalog_sum_bps;
         let mut seen_count = 0_usize;
 
         for (position, &id) in trace.iter().enumerate() {
@@ -165,12 +175,15 @@ pub fn audit<R: Rng + ?Sized>(
                 if id == 1 {
                     stats.blind_hits += 1;
                 }
-                let elimination_guess = used
-                    .iter()
-                    .position(|&value| !value)
-                    .map(|index| index + 1)
-                    .unwrap_or(1);
-                if next_type + 1 == elimination_guess {
+                let elimination_guess = if mode == Mode::WithReplacement {
+                    1_u32 // with replacement, no IDs can be excluded
+                } else {
+                    while used.contains(&first_unused) && first_unused < TYPES as u32 {
+                        first_unused += 1;
+                    }
+                    first_unused
+                };
+                if id == elimination_guess {
                     stats.elimination_hits += 1;
                 }
                 if position > 0 {
@@ -182,7 +195,7 @@ pub fn audit<R: Rng + ?Sized>(
                 }
 
                 let expected_bps = if mode == Mode::WithReplacement {
-                    independent_bps(catalog)
+                    baseline_bps
                 } else {
                     // El adversario puede conocer el catalogo y los tipos
                     // observados. No ve futuros resultados ni la semilla.
@@ -199,10 +212,9 @@ pub fn audit<R: Rng + ?Sized>(
             }
 
             let index = id as usize - 1;
-            if used[index] {
+            if !used.insert(id) {
                 duplicates += 1;
             } else {
-                used[index] = true;
                 seen_count += 1;
                 sum_remaining -= catalog.outcomes[index].payout_bps;
             }
@@ -273,7 +285,7 @@ pub fn audit<R: Rng + ?Sized>(
             report.observed_prefix > 0 && report.possible_next_types < TYPES
         });
     // Si en el peor caso todos los 99 sorteos observados pagaron 0,
-    // solo se redujo el denominador de 8192 a 8093. Con la tabla actual,
+    // solo se redujo el denominador de 128000 a 8093. Con la tabla actual,
     // es matematicamente imposible que el RTP condicional supere el 100%.
     let legacy_max_conditional_rtp_percent = if mode == Mode::WithoutReplacement {
         Some(100.0 * crate::RTP_TARGET_BPS as f64 * TYPES as f64
@@ -293,7 +305,7 @@ pub fn audit<R: Rng + ?Sized>(
     if mode == Mode::WithoutReplacement {
         observations.push(
             format!(
-                "Existe informacion de descarte, pero con 8192 tipos y 100 sorteos \
+                "Existe informacion de descarte, pero con 128000 tipos y 100 sorteos \
                  el RTP condicional maximo posible es {:.4}%: por debajo del 100%. \
                  Esto no rompe ChaCha ni genera por si solo EV positivo.",
                 legacy_max_conditional_rtp_percent.unwrap_or(0.0)
@@ -301,7 +313,7 @@ pub fn audit<R: Rng + ?Sized>(
         );
     } else if mode == Mode::WithReplacement {
         observations.push(
-            "Muestreo independiente: cada giro mantiene 8192 posibilidades y 96,5% de RTP \
+            "Muestreo independiente: cada giro mantiene 128000 posibilidades y 96,5% de RTP \
              condicional; se permiten repeticiones dentro del paquete."
                 .to_owned(),
         );
@@ -355,17 +367,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn structurally_predictable_even_with_secure_rng() {
+    fn structural_exclusion_exists_but_remains_nonprofitable() {
         let mut rng = rand::rng();
         let catalog = crate::generate_catalog(&mut rng).unwrap();
         let report = audit(Mode::WithoutReplacement, 1024, &catalog, &mut rng, |_| Ok(()))
             .unwrap();
         assert!(report.structural_exploit_detected);
         assert_eq!(report.duplicates_within_packages, 0);
-        assert_eq!(report.checkpoints[0].possible_next_types, 8192);
+        assert_eq!(report.checkpoints[0].possible_next_types, 128000);
         assert_eq!(report.checkpoints[5].possible_next_types, 8093);
-        // Con 8192 tipos, observar 99 de ellos aporta poca informacion:
-        // el techo condicional es 97,68%, asi que no hay EV positivo.
+        // Con 128000 tipos, observar 99 de ellos aporta poca informacion:
+        // el techo condicional es 96,575%, asi que no hay EV positivo.
         // Aun existe una pequeña fuga de informacion acerca de los IDs.
         assert!(
             report.checkpoints[5].theoretical_elimination_percent
@@ -373,7 +385,7 @@ mod tests {
         );
         let ceiling = report.legacy_max_conditional_rtp_percent.unwrap();
         assert!(ceiling > 96.5 && ceiling < 100.0);
-        assert!((ceiling - 97.680464599).abs() < 0.001);
+        assert!((ceiling - 96.574755).abs() < 0.01);
         assert!(report.checkpoints.iter().all(|point|
             point.conditional_positive_ev_opportunities == 0));
     }
@@ -385,7 +397,7 @@ mod tests {
         let report = audit(Mode::WithReplacement, 128, &catalog, &mut rng, |_| Ok(()))
             .unwrap();
         assert!(!report.structural_exploit_detected);
-        assert_eq!(report.checkpoints[5].possible_next_types, 8192);
+        assert_eq!(report.checkpoints[5].possible_next_types, 128000);
         assert!(report.checkpoints.iter().all(|cp| {
             cp.conditional_positive_ev_opportunities == 0
                 && (cp.mean_conditional_rtp_percent - 96.5).abs() < f64::EPSILON * 100.0
@@ -416,7 +428,7 @@ mod tests {
             }).sum();
             assert_eq!(
                 conditional_bps(&trace, &catalog, checkpoint),
-                (79_052_800 - sum_before) / (8192 - checkpoint) as u32
+                (1_235_200_000 - sum_before) / (128000 - checkpoint) as u32
             );
         }
     }
