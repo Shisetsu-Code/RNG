@@ -2,7 +2,7 @@
 //! Nunca participa en RNG, claves, pagos ni generacion de resultados.
 
 use rng_grid::audit::{CHECKPOINTS, Trace};
-use rng_grid::Catalog;
+use rng_grid::{Catalog, TYPES, BETS_PER_PACKAGE};
 use std::sync::mpsc;
 use std::time::Duration;
 use wgpu::util::DeviceExt;
@@ -102,16 +102,29 @@ impl GpuAnalyzer {
 
         let ids_bytes = encode(&ids);
         let rewards_bytes = encode(&rewards);
+        let settings = encode(&[
+            TYPES as u32,
+            rewards.iter().copied().sum::<u32>(),
+            BETS_PER_PACKAGE as u32,
+            0_u32,
+        ]);
+        let settings_buffer = self.device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("Catalog total and size, 16-byte uniform"),
+                contents: &settings,
+                usage: wgpu::BufferUsages::UNIFORM,
+            },
+        );
         let ids_buffer = self.device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
-                label: Some("128 outcome type ID traces"),
+                label: Some("8192 outcome type ID traces"),
                 contents: &ids_bytes,
                 usage: wgpu::BufferUsages::STORAGE,
             },
         );
         let payout_buffer = self.device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
-                label: Some("128 outcome paytable"),
+                label: Some("8192 outcome paytable"),
                 contents: &rewards_bytes,
                 usage: wgpu::BufferUsages::STORAGE,
             },
@@ -145,6 +158,10 @@ impl GpuAnalyzer {
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: output_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: settings_buffer.as_entire_binding(),
                 },
             ],
         });
