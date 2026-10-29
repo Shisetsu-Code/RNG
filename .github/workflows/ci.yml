@@ -63,17 +63,40 @@ jobs:
           if ($rows.Count -ne 128) { throw "Expected 128 wallets, got $($rows.Count)" }
           $count = ($rows | Measure-Object -Property spins -Sum).Sum
           if ($count -ne 257) { throw "Expected 257 bets, got $count" }
+      - name: Validate Windows GUI script and initialize Windows Forms
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path .\RNG-6x6-GUI.ps1).Path,
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if (@($errors).Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.ToString() }
+            throw "Invalid PowerShell syntax"
+          }
+          $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File .\RNG-6x6-GUI.ps1 -SelfTest
+          if ($LASTEXITCODE -ne 0 -or $output -notcontains 'GUI_SELF_TEST_OK') {
+            throw "GUI self-test failed: $output"
+          }
       - name: Prepare portable Windows folder
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item target\release\rng-grid.exe dist\RNG-6x6.exe
+          Copy-Item target\release\rng-grid.exe dist\RNG-6x6-CLI.exe
+          Copy-Item target\release\windows_gui.exe dist\RNG-6x6.exe
+          Copy-Item RNG-6x6-GUI.ps1 dist\RNG-6x6-GUI.ps1
           Copy-Item INICIAR-WINDOWS.cmd dist\INICIAR-WINDOWS.cmd
+          Copy-Item DIAGNOSTICO-WINDOWS.cmd dist\DIAGNOSTICO-WINDOWS.cmd
           Copy-Item README.md dist\README.md
+          if ((Get-Item dist\RNG-6x6.exe).Length -lt 1024) { throw "Invalid GUI executable" }
+          if ((Get-Item dist\RNG-6x6-CLI.exe).Length -lt 1024) { throw "Invalid CLI executable" }
       - name: Publish Windows executable artifact
         uses: actions/upload-artifact@v7
         with:
-          name: RNG-6x6-Windows-x64
+          name: RNG-6x6-Windows-GUI-x64
           path: dist/
           if-no-files-found: error
           retention-days: 30
