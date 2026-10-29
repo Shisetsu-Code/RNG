@@ -26,7 +26,7 @@ enum Selection {
 struct SecurityReport {
     version: u32,
     tested_packages_per_mode: u64,
-    generated_bets_per_mode: u8192,
+    generated_bets_per_mode: u128,
     catalog_size: usize,
     catalog_rtp_percent: f64,
     gpu: Option<GpuReport>,
