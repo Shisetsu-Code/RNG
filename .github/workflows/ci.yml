@@ -85,7 +85,7 @@ jobs:
           print("OK: unchanged catalog, embedded 6x6 matrices and exactly 100 bets.")
           PY
 
-      - name: Audit security: secure shuffling vs independent draws vs weak control
+      - name: "Audit security: secure shuffling vs independent draws vs weak control"
         shell: bash
         run: |
           cargo run --release --bin rng_redteam -- --packages 256 --mode all --catalog smoke/catalogo_128.json --out redteam
