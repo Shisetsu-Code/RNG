@@ -29,19 +29,20 @@ struct FullPackage<'a> {
 
 fn help() {
     println!(
-        "RNG 6x6 | 128 tipos de resultado | 100 apuestas por paquete | RTP 96,5%\n\
+        "RNG 6x6 | 8192 tipos de resultado | 100 apuestas por paquete | RTP 96,5%\n\
          \n\
          Uso: rng-grid.exe --packages N [opciones]\n\
          --packages N          Cantidad de paquetes de 100 apuestas\n\
          --out DIRECTORIO      Donde guardar resultados (default: salida_rng)\n\
-         --reuse-catalog JSON  Utilizar el catalogo previo de 128 matrices\n\
-         --compact             Guardar solo IDs en cada paquete (menos espacio)\n\
+         --reuse-catalog JSON  Utilizar el catalogo previo de 8192 matrices\n\
+         --compact             Guardar solo IDs (predeterminado)\n\
+         --full                Incluir las matrices 6x6 en cada apuesta\n\
          --split-files         Ademas, generar paquete_000001.json, etc.\n\
          --help                Mostrar esta ayuda\n\
          \n\
          Sin argumentos pregunta la cantidad de paquetes.\n\
-         Los paquetes se mezclan de forma independiente: 100 tipos diferentes\n\
-         dentro de cada paquete, elegidos uniformemente entre los 128.\n\
+         Cada paquete contiene 100 extracciones independientes, uniformes\n\
+         sobre 8192 tipos. Los IDs pueden aparecer varias veces.\n\
          El RTP de 96,5% es matematico; NO se fuerza por paquete.\n\
          No existen cuentas ni saldos en este programa."
     );
@@ -49,7 +50,7 @@ fn help() {
 
 fn prompt_packages() -> Result<usize, Box<dyn Error>> {
     println!("==========================================");
-    println!(" RNG 6x6 | 128 tipos | RTP 96,5%");
+    println!(" RNG 6x6 | 8192 tipos | RTP 96,5%");
     println!(" 100 apuestas en cada paquete");
     println!("==========================================");
     print!("Cuantos paquetes de 100 apuestas queres generar? [100]: ");
@@ -76,7 +77,7 @@ fn parse_args() -> Result<(Options, bool), Box<dyn Error>> {
     let mut count = None;
     let mut output = PathBuf::from("salida_rng");
     let mut reuse_catalog = None;
-    let mut compact = false;
+    let mut compact = true;
     let mut split_files = false;
     if interactive {
         count = Some(prompt_packages()?);
@@ -117,6 +118,7 @@ fn parse_args() -> Result<(Options, bool), Box<dyn Error>> {
                     ));
                 }
                 "--compact" => compact = true,
+                "--full" => compact = false,
                 "--split-files" => split_files = true,
                 _ => {
                     return Err(format!("opcion desconocida: {arg}; ejecuta --help").into());
@@ -141,10 +143,10 @@ fn parse_args() -> Result<(Options, bool), Box<dyn Error>> {
 }
 
 fn write_catalog(catalog: &Catalog, output: &Path) -> Result<(), Box<dyn Error>> {
-    let file = BufWriter::new(File::create(output.join("catalogo_128.json"))?);
+    let file = BufWriter::new(File::create(output.join("catalogo_8192.json"))?);
     serde_json::to_writer_pretty(file, catalog)?;
 
-    let mut csv = BufWriter::new(File::create(output.join("catalogo_128.csv"))?);
+    let mut csv = BufWriter::new(File::create(output.join("catalogo_8192.csv"))?);
     writeln!(
         csv,
         "tipo_id,parejas_horizontales,retorno_bps,retorno_multiplicador,fila_1,fila_2,fila_3,fila_4,fila_5,fila_6"
@@ -219,7 +221,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
     let mut summary = BufWriter::new(File::create(options.output.join("resumen_paquetes.csv"))?);
     writeln!(
         summary,
-        "paquete,apuestas,tipos_unicos,retorno_en_unidades_de_apuesta,rtp_observado_pct"
+        "paquete,apuestas,tipos_unicos,tipos_repetidos,retorno_en_unidades_de_apuesta,rtp_observado_pct"
     )?;
 
     let individual_dir = options.output.join("paquetes");
@@ -229,6 +231,9 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
 
     let mut total_return_bps = 0_u128;
     let mut frequencies = [0_u64; TYPES];
+    let mut last_seen_in_package = [0_usize; TYPES];
+    let mut duplicates_within_packages = 0_u128;
+    let mut packages_with_duplicates = 0_usize;
 
     println!("Catalogo: {TYPES} matrices distintas de 6x6");
     println!("RTP teorico: {:.4}%", RTP_TARGET_BPS as f64 / 100.0);
@@ -243,9 +248,20 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
     for index in 1..=options.packages {
         let package = generate_package(&catalog, index, &mut rng);
         debug_assert_eq!(package.outcome_ids.len(), BETS_PER_PACKAGE);
+        let mut unique_in_package = 0_usize;
         for &id in &package.outcome_ids {
-            let slot = &mut frequencies[usize::from(id) - 1];
+            let key = usize::from(id) - 1;
+            let slot = &mut frequencies[key];
             *slot = slot.checked_add(1).ok_or("desbordamiento de frecuencias")?;
+            if last_seen_in_package[key] != index {
+                last_seen_in_package[key] = index;
+                unique_in_package += 1;
+            }
+        }
+        let repeated = BETS_PER_PACKAGE - unique_in_package;
+        duplicates_within_packages += repeated as u128;
+        if repeated > 0 {
+            packages_with_duplicates += 1;
         }
         total_return_bps = total_return_bps
             .checked_add(u128::from(package.total_payout_bps))
@@ -255,10 +271,11 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
         jsonl.write_all(b"\n")?;
         writeln!(
             summary,
-            "{},{},{},{:.4},{:.4}",
+            "{},{},{},{},{:.4},{:.4}",
             index,
             BETS_PER_PACKAGE,
-            BETS_PER_PACKAGE,
+            unique_in_package,
+            repeated,
             package.total_payout_bps as f64 / BASIS_POINTS as f64,
             package.observed_rtp_percent()
         )?;
@@ -297,6 +314,15 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
     let rtp_observed_percent =
         total_return_bps as f64 * 100.0 / (total_bets as f64 * BASIS_POINTS as f64);
     let elapsed = start.elapsed();
+    let expected_per_type = total_bets as f64 / TYPES as f64;
+    let std_deviation = (expected_per_type * (1.0 - 1.0 / TYPES as f64)).sqrt();
+    let min_frequency = frequencies.iter().copied().min().unwrap_or_default();
+    let max_frequency = frequencies.iter().copied().max().unwrap_or_default();
+    let covered_types = frequencies.iter().filter(|&&frequency| frequency > 0).count();
+    let max_abs_z = frequencies
+        .iter()
+        .map(|&frequency| (frequency as f64 - expected_per_type).abs() / std_deviation)
+        .fold(0.0_f64, f64::max);
     let report = json!({
         "catalog_outcomes": TYPES,
         "grid_size": [6, 6],
@@ -306,7 +332,14 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
         "theoretical_rtp_percent": 96.5,
         "observed_rtp_percent": rtp_observed_percent,
         "total_return_in_bet_units": total_return_bps as f64 / BASIS_POINTS as f64,
-        "sampling": "shuffle all 128, take 100 without replacement, repeat independently",
+        "sampling": "100 independent CSPRNG draws uniformly from 8192 types, with replacement",
+        "types_observed": covered_types,
+        "expected_occurrences_per_type": expected_per_type,
+        "minimum_occurrences_per_type": min_frequency,
+        "maximum_occurrences_per_type": max_frequency,
+        "maximum_frequency_deviation_z": max_abs_z,
+        "duplicate_draws_within_packages": duplicates_within_packages.to_string(),
+        "packages_with_duplicate_types": packages_with_duplicates,
         "compact_package_references": options.compact,
         "split_files": options.split_files,
         "elapsed_seconds": elapsed.as_secs_f64()
@@ -317,13 +350,16 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
     println!();
     println!("Paquetes generados: {}", options.packages);
     println!("Apuestas generadas: {total_bets}");
-    println!("Tipos distintos en cada paquete: {BETS_PER_PACKAGE}/{TYPES}");
+    println!("Tipos posibles por apuesta: {TYPES} (con reposicion)");
+    println!("Tipos presentes: {covered_types}/{TYPES} | Frecuencias min/max: {min_frequency}/{max_frequency} | Esperado: {expected_per_type:.3}");
+    println!("Maxima desviacion normalizada de frecuencia: {max_abs_z:.3} sigmas");
+    println!("Repeticiones dentro de paquetes: {duplicates_within_packages} en {packages_with_duplicates} paquetes");
     println!("RTP teorico: 96,5000%");
     println!("RTP observado: {rtp_observed_percent:.4}%");
     println!("Retorno total: {:.4} unidades de apuesta", total_return_bps as f64 / BASIS_POINTS as f64);
     println!("Tiempo: {:.3} segundos", elapsed.as_secs_f64());
     println!("Directorio: {}", options.output.canonicalize()?.display());
-    println!("Archivos: catalogo_128.json, catalogo_128.csv, paquetes.jsonl,");
+    println!("Archivos: catalogo_8192.json, catalogo_8192.csv, paquetes.jsonl,");
     println!("          resumen_paquetes.csv, frecuencias_tipos.csv, reporte.json");
     if options.split_files {
         println!("          + {} archivos individuales en /paquetes", options.packages);
