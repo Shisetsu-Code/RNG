@@ -244,7 +244,7 @@ mod windows_gui {
         if is_checked(ui.split.load(Ordering::SeqCst)) {
             command.arg("--split-files");
         }
-        let catalog = directory.join("catalogo_8192.json");
+        let catalog = directory.join("catalogo_128000.json");
         if is_checked(ui.reuse.load(Ordering::SeqCst)) && catalog.exists() {
             command.arg("--reuse-catalog").arg(&catalog);
         }
@@ -469,7 +469,7 @@ mod windows_gui {
         if unsafe { RegisterClassW(&class) } == 0 {
             return Err("No se puede registrar la ventana nativa en Windows".to_owned());
         }
-        let title = wide("RNG 6x6 - 8192 tipos, paquetes de 100");
+        let title = wide("RNG 6x6 - 128000 tipos, paquetes de 100");
         // SAFETY: RegisterClassW has registered the named class above.
         let hwnd = unsafe {
             CreateWindowExW(
@@ -510,7 +510,7 @@ mod windows_gui {
         )?;
         create_child(
             window, instance, "STATIC",
-            "8192 matrices | 100 apuestas por paquete | RTP teorico 96,5%",
+            "128000 matrices | 100 apuestas por paquete | RTP teorico 96,5%",
             0, [20, 52, 680, 25], 0,
         )?;
 
@@ -542,7 +542,7 @@ mod windows_gui {
         ui.directory.store(directory, Ordering::SeqCst);
 
         let reuse = create_child(
-            window, instance, "BUTTON", "Reutilizar catalogo de 8192 tipos si existe",
+            window, instance, "BUTTON", "Reutilizar catalogo de 128000 tipos si existe",
             BS_AUTOCHECKBOX | WS_TABSTOP, [20, 272, 680, 27], 0,
         )?;
         ui.reuse.store(reuse, Ordering::SeqCst);
@@ -594,7 +594,7 @@ mod windows_gui {
                 instance,
                 "EDIT",
                 "Ingresa la cantidad de paquetes y presiona GENERAR.\r\n\
-                 El catalogo de 8192 tipos se guarda en catalogo_8192.json.\r\n\
+                 El catalogo de 128000 tipos se guarda en catalogo_128000.json.\r\n\
                  Los paquetes de 100 se guardan en paquetes.jsonl.",
                 WS_BORDER | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL,
                 [20, 475, 685, 80],
@@ -653,7 +653,7 @@ mod windows_gui {
             if !result.ok {
                 return Err(format!("La GUI no pudo completar la generacion:\n{}", result.text));
             }
-            let catalog_path = output.join("catalogo_8192.json");
+            let catalog_path = output.join("catalogo_128000.json");
             let catalog: rng_grid::Catalog = serde_json::from_slice(
                 &fs::read(&catalog_path)
                     .map_err(|error| format!("Falta el catalogo de resultados: {error}"))?,
@@ -673,9 +673,9 @@ mod windows_gui {
                     .as_array()
                     .ok_or("Falta la lista de IDs del paquete")?;
                 if ids.len() != 100 || ids.iter().any(|value| {
-                    !matches!(value.as_u64(), Some(id) if (1..=8192).contains(&id))
+                    !matches!(value.as_u64(), Some(id) if (1..=128000).contains(&id))
                 }) {
-                    return Err("El paquete no contiene 100 IDs validos entre 1 y 8192".to_owned());
+                    return Err("El paquete no contiene 100 IDs validos entre 1 y 128000".to_owned());
                 }
             }
             fs::remove_dir_all(output)
