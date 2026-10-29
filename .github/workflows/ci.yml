@@ -1,4 +1,4 @@
-name: Rust RNG 6x6 - 128 tipos / paquetes de 100
+name: Rust RNG 6x6 - 8192 tipos / paquetes de 100
 
 on:
   push:
@@ -37,7 +37,7 @@ jobs:
         shell: bash
         run: |
           cargo run --release -- --packages 7 --out smoke --compact --split-files
-      - name: Verify all 128 patterns and 700 bets
+      - name: Verify all 8192 patterns and 700 bets
         shell: bash
         run: |
           python3 - <<'PY'
@@ -46,45 +46,61 @@ jobs:
           from pathlib import Path
 
           folder = Path("smoke")
-          catalog = json.loads((folder / "catalogo_128.json").read_text())
+          catalog = json.loads((folder / "catalogo_8192.json").read_text())
           outcomes = catalog["outcomes"]
-          assert len(outcomes) == 128
-          assert len({tuple(sum(item["grid"], [])) for item in outcomes}) == 128
+          assert len(outcomes) == 8192
+          assert len({tuple(sum(item["grid"], [])) for item in outcomes}) == 8192
           assert all(len(grid) == 6 and all(len(row) == 6 for row in grid) for grid in (x["grid"] for x in outcomes))
-          assert sum(o["payout_bps"] for o in outcomes) == 128 * 9650
+          assert sum(o["payout_bps"] for o in outcomes) == 8192 * 9650
           assert dict(Counter(x["payout_bps"] for x in outcomes)) == {
-              0: 64, 10000: 32, 15000: 16, 20000: 8,
-              35200: 1, 40000: 4, 80000: 2, 160000: 1
+              0: 4096, 10000: 2048, 15000: 1024, 20000: 512,
+              35200: 64, 40000: 256, 80000: 128, 160000: 64
           }
           packages = [json.loads(line) for line in (folder / "paquetes.jsonl").read_text().splitlines()]
           assert len(packages) == 7
           for i, package in enumerate(packages, 1):
               ids = package["outcome_ids"]
               assert package["package"] == i
-              assert len(ids) == len(set(ids)) == 100
-              assert all(1 <= item <= 128 for item in ids)
+              assert len(ids) == 100
+              assert all(1 <= item <= 8192 for item in ids)
               expected = sum(outcomes[item-1]["payout_bps"] for item in ids)
               assert package["total_payout_bps"] == expected
               assert (folder / "paquetes" / f"paquete_{i:06}.json").exists()
           assert len((folder / "resumen_paquetes.csv").read_text().splitlines()) == 8
-          assert len((folder / "catalogo_128.csv").read_text().splitlines()) == 129
-          print("OK: 128 unique types and seven validated packages of 100.")
+          assert len((folder / "catalogo_8192.csv").read_text().splitlines()) == 8193
+          print("OK: 8192 unique types and seven valid packages of 100 with replacement.")
+          PY
+      - name: Check distribution and repeated IDs over 500 packages
+        shell: bash
+        run: |
+          cargo run --release -- --packages 500 --out spread --compact
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path("spread/reporte.json").read_text())
+          assert report["catalog_outcomes"] == 8192
+          assert report["duplicate_draws_within_packages"] != "0", "repeats should occur in 500 packages"
+          assert report["expected_occurrences_per_type"] == 50000/8192
+          assert report["maximum_frequency_deviation_z"] < 8
+          assert report["types_observed"] > 8000
+          assert "with replacement" in report["sampling"]
+          print("Uniform distribution and duplicate allowance OK.")
           PY
       - name: Test reuse and embedded full matrices
         shell: bash
         run: |
-          cargo run --release -- --packages 3 --reuse-catalog smoke/catalogo_128.json --out full
+          cargo run --release -- --packages 3 --reuse-catalog smoke/catalogo_8192.json --out full --full
           python3 - <<'PY'
           import json
           from pathlib import Path
-          original = json.loads(Path("smoke/catalogo_128.json").read_text())
-          reused = json.loads(Path("full/catalogo_128.json").read_text())
+          original = json.loads(Path("smoke/catalogo_8192.json").read_text())
+          reused = json.loads(Path("full/catalogo_8192.json").read_text())
           assert original == reused
           packages = [json.loads(line) for line in Path("full/paquetes.jsonl").read_text().splitlines()]
           assert len(packages) == 3
           for package in packages:
               assert len(package["bets"]) == 100
-              assert len({x["id"] for x in package["bets"]}) == 100
+              assert all(1 <= x["id"] <= 8192 for x in package["bets"])
               assert sum(x["payout_bps"] for x in package["bets"]) == package["total_payout_bps"]
           print("OK: unchanged catalog, embedded 6x6 matrices and exactly 100 bets.")
           PY
@@ -92,21 +108,21 @@ jobs:
       - name: "Audit security: secure shuffling vs independent draws vs weak control"
         shell: bash
         run: |
-          cargo run --release --bin rng_redteam -- --packages 256 --mode all --catalog smoke/catalogo_128.json --out redteam
+          cargo run --release --bin rng_redteam -- --packages 256 --mode all --catalog smoke/catalogo_8192.json --out redteam
           python3 - <<'PY'
           import json
           from pathlib import Path
           report = json.loads(Path("redteam/auditoria.json").read_text())
           runs = report["runs"]
           assert len(runs) == 3
-          without, independent, weak = runs
+          independent, without, weak = runs
           assert without["mode"] == "without_replacement"
           assert without["structural_exploit_detected"] is True
           assert without["duplicates_within_packages"] == 0
-          assert without["checkpoints"][-1]["possible_next_types"] == 29
+          assert without["checkpoints"][-1]["possible_next_types"] == 8093
           assert independent["mode"] == "with_replacement"
           assert independent["structural_exploit_detected"] is False
-          assert independent["checkpoints"][-1]["possible_next_types"] == 128
+          assert independent["checkpoints"][-1]["possible_next_types"] == 8192
           assert all(x["conditional_positive_ev_opportunities"] == 0 for x in independent["checkpoints"])
           assert weak["mode"] == "weak_counter" and weak["weak_rng_predictable"] is True
           assert weak["checkpoints"][-1]["increment_predictor_success_percent"] == 100
@@ -137,13 +153,13 @@ jobs:
         run: |
           .\target\release\rng-grid.exe --packages 3 --out smoke --compact
           if ($LASTEXITCODE -ne 0) { throw "Rust CLI failed" }
-          $catalog = Get-Content .\smoke\catalogo_128.json -Raw | ConvertFrom-Json
-          if ($catalog.outcomes.Count -ne 128) { throw "Expected 128 outcomes" }
+          $catalog = Get-Content .\smoke\catalogo_8192.json -Raw | ConvertFrom-Json
+          if ($catalog.outcomes.Count -ne 8192) { throw "Expected 8192 outcomes" }
           $packages = @(Get-Content .\smoke\paquetes.jsonl | ForEach-Object { $_ | ConvertFrom-Json })
           if ($packages.Count -ne 3) { throw "Expected 3 packages" }
           foreach ($package in $packages) {
             if ($package.outcome_ids.Count -ne 100) { throw "Package has a count different from 100" }
-            if (@($package.outcome_ids | Select-Object -Unique).Count -ne 100) { throw "Repeated ID in same batch" }
+            if (@($package.outcome_ids | Where-Object { $_ -lt 1 -or $_ -gt 8192 }).Count -gt 0) { throw "Invalid type ID" }
           }
       - name: Clippy for native Windows GUI
         run: cargo clippy --all-targets -- -D warnings
@@ -156,11 +172,12 @@ jobs:
       - name: E2E adversarial audit on Windows using GPU-capable executable in CPU mode
         shell: pwsh
         run: |
-          .\target\release\rng_redteam.exe --packages 64 --mode all --catalog smoke\catalogo_128.json --out audit_smoke
+          .\target\release\rng_redteam.exe --packages 64 --mode all --catalog smoke\catalogo_8192.json --out audit_smoke
           if ($LASTEXITCODE -ne 0) { throw "RNG auditor test failed" }
           $result = Get-Content .\audit_smoke\auditoria.json -Raw | ConvertFrom-Json
           if ($result.runs.Count -ne 3) { throw "Expected three audit models" }
-          if (-not $result.runs[0].structural_exploit_detected) { throw "Structural leak not detected" }
+          if ($result.runs[0].structural_exploit_detected) { throw "Production independent model must not have a structural leak" }
+          if (-not $result.runs[1].structural_exploit_detected) { throw "Legacy nonreplacement leak not detected" }
           if (-not $result.runs[2].weak_rng_predictable) { throw "Predictor failed to detect intentionally weak RNG" }
       - name: Validate actual native GUI startup and generate button path
         shell: pwsh
