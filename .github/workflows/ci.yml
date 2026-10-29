@@ -124,8 +124,8 @@ jobs:
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Copy-Item target\release\windows_gui.exe dist\RNG-6x6.exe
           Copy-Item target\release\rng-grid.exe dist\RNG-6x6-CLI.exe
-          & .\dist\RNG-6x6.exe --self-test
-          if ($LASTEXITCODE -ne 0) {
+          $gui = Start-Process -FilePath (Resolve-Path .\dist\RNG-6x6.exe).Path -ArgumentList '--self-test' -Wait -PassThru
+          if ($gui.ExitCode -ne 0) {
             $log = Join-Path $env:TEMP 'rng-gui-self-test-error.txt'
             if (Test-Path $log) { Get-Content $log }
             throw "Native Rust GUI E2E test failed"
