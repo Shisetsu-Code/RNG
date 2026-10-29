@@ -310,7 +310,7 @@ mod tests {
     #[test]
     fn each_package_has_100_independent_draws_and_repeats_are_allowed() {
         use rand::SeedableRng;
-        let mut rng = rand::rngs::StdRng::seed_from_u64(0x128_000_9650);
+        let mut rng = rand::rngs::StdRng::seed_from_u64(0x0012_8000_9650);
         let catalog = generate_catalog(&mut rng).unwrap();
         let mut repeats = 0_usize;
         let mut frequencies = vec![0_usize; TYPES];
