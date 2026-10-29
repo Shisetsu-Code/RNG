@@ -332,7 +332,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
         "theoretical_rtp_percent": 96.5,
         "observed_rtp_percent": rtp_observed_percent,
         "total_return_in_bet_units": total_return_bps as f64 / BASIS_POINTS as f64,
-        "sampling": "100 independent uniform CSPRNG draws from 128000 types (replacement enabled)",
+        "sampling": "100 independent uniform CSPRNG draws from 128000 types, with replacement",
         "types_observed": covered_types,
         "expected_occurrences_per_type": expected_per_type,
         "minimum_occurrences_per_type": min_frequency,
