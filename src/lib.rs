@@ -1,7 +1,7 @@
-//! Catalogo de 8192 resultados distintos de 6x6, muestreados en paquetes de 100.
+//! Catalogo de 128_000 resultados distintos de 6x6, muestreados en paquetes de 100.
 //!
 //! Cada tipo tiene un premio fijo determinado por sus 36 simbolos.
-//! La probabilidad por tipo es 1/8192 en cada apuesta independiente.
+//! La probabilidad por tipo es 1/128000 en cada apuesta independiente.
 //! El RTP de la distribucion es exactamente 9.650 puntos basicos (96,5%).
 //! Ningun resultado ni probabilidad cambia en funcion de saldos o ganancias.
 
@@ -15,7 +15,7 @@ use std::collections::HashSet;
 pub const ROWS: usize = 6;
 pub const COLS: usize = 6;
 pub const SYMBOLS: u8 = 5;
-pub const TYPES: usize = 8192;
+pub const TYPES: usize = 128_000;
 pub const BETS_PER_PACKAGE: usize = 100;
 pub const BASIS_POINTS: u64 = 10_000;
 pub const RTP_TARGET_BPS: u64 = 9_650;
@@ -32,19 +32,19 @@ pub struct Tier {
 
 pub const TIERS: [Tier; 8] = [
     Tier { count: 4096, payout_bps: 0 },       // 0x
-    Tier { count: 2048, payout_bps: 10_000 },  // 1x
-    Tier { count: 1024, payout_bps: 15_000 },  // 1,5x
-    Tier { count: 512, payout_bps: 20_000 },   // 2x
-    Tier { count: 64, payout_bps: 35_200 },   // 3,52x
-    Tier { count: 256, payout_bps: 40_000 },   // 4x
-    Tier { count: 128, payout_bps: 80_000 },   // 8x
+    Tier { count: 32000, payout_bps: 10_000 },  // 1x
+    Tier { count: 16000, payout_bps: 15_000 },  // 1,5x
+    Tier { count: 8000, payout_bps: 20_000 },   // 2x
+    Tier { count: 1000, payout_bps: 35_200 },   // 3,52x
+    Tier { count: 4000, payout_bps: 40_000 },   // 4x
+    Tier { count: 2000, payout_bps: 80_000 },   // 8x
     Tier { count: 64, payout_bps: 160_000 },  // 16x
 ];
 
 /// Cada tipo es una matriz unica, con retorno explicito.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Outcome {
-    pub id: u16,
+    pub id: u32,
     pub grid: Grid,
     pub matching_pairs: u8,
     pub payout_bps: u32,
@@ -64,7 +64,7 @@ pub struct Catalog {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Package {
     pub package: usize,
-    pub outcome_ids: Vec<u16>,
+    pub outcome_ids: Vec<u32>,
     /// Suma de los multiplicadores individuales, en puntos basicos.
     /// Dividir por 10000 para conocer el retorno en unidades de apuesta.
     pub total_payout_bps: u64,
@@ -110,14 +110,14 @@ pub fn evaluate_grid(grid: &Grid) -> u32 {
     TIERS[tier_for_score(matching_pairs(grid))].payout_bps
 }
 
-/// Devuelve 9650 solo si el reparto de 8192 tipos es exactamente 96,5%.
+/// Devuelve 9650 solo si el reparto de 128_000 tipos es exactamente 96,5%.
 pub fn theoretical_rtp_bps() -> u64 {
     let types: usize = TIERS.iter().map(|tier| tier.count).sum();
     let total: u64 = TIERS
         .iter()
         .map(|tier| tier.count as u64 * u64::from(tier.payout_bps))
         .sum();
-    assert_eq!(types, TYPES, "la tabla de premios no suma 8192 tipos");
+    assert_eq!(types, TYPES, "la tabla de premios no suma 128_000 tipos");
     assert_eq!(total % TYPES as u64, 0, "RTP no representable en bps");
     total / TYPES as u64
 }
@@ -132,9 +132,9 @@ fn random_grid<R: Rng + ?Sized>(rng: &mut R) -> Grid {
     grid
 }
 
-/// Genera 8192 matrices distintas, respetando exactamente la cuota de
+/// Genera 128_000 matrices distintas, respetando exactamente la cuota de
 /// resultados de cada clase. El muestreo es uniforme dentro de cada clase.
-/// Finalmente mezcla las matrices y les asigna un identificador 1..8192.
+/// Finalmente mezcla las matrices y les asigna un identificador 1..128_000.
 pub fn generate_catalog<R: Rng + ?Sized>(rng: &mut R) -> Result<Catalog, String> {
     if theoretical_rtp_bps() != RTP_TARGET_BPS {
         return Err("la tabla de resultados no cumple RTP 96,5%".to_owned());
@@ -146,7 +146,7 @@ pub fn generate_catalog<R: Rng + ?Sized>(rng: &mut R) -> Result<Catalog, String>
 
     // Los 8 niveles tienen probabilidad positiva al generar matrices 6x6
     // aleatorias. Este limite evita bucles infinitos si cambia esa regla.
-    for _ in 0..2_000_000_u32 {
+    for _ in 0..3_000_000_u32 {
         if outcomes.len() == TYPES {
             break;
         }
@@ -174,14 +174,14 @@ pub fn generate_catalog<R: Rng + ?Sized>(rng: &mut R) -> Result<Catalog, String>
 
     outcomes.shuffle(rng);
     for (index, outcome) in outcomes.iter_mut().enumerate() {
-        outcome.id = u16::try_from(index + 1).expect("8192 cabe en u16");
+        outcome.id = u32::try_from(index + 1).expect("128000 cabe en u32");
     }
     let catalog = Catalog {
-        version: 2,
+        version: 3,
         grid_size: [ROWS, COLS],
         symbols: SYMBOLS,
         theoretical_rtp_bps: RTP_TARGET_BPS,
-        sampling: "100 extracciones uniformes independientes entre 8192 tipos, con reposicion"
+        sampling: "100 extracciones uniformes independientes entre 128_000 tipos, con reposicion"
             .to_owned(),
         outcomes,
     };
@@ -192,7 +192,7 @@ pub fn generate_catalog<R: Rng + ?Sized>(rng: &mut R) -> Result<Catalog, String>
 /// Valida un catalogo de disco: evita matrices duplicadas, premios
 /// adulterados y desviaciones de la distribucion de tipos.
 pub fn validate_catalog(catalog: &Catalog) -> Result<(), String> {
-    if catalog.version != 2
+    if catalog.version != 3
         || catalog.grid_size != [ROWS, COLS]
         || catalog.symbols != SYMBOLS
         || catalog.outcomes.len() != TYPES
@@ -241,7 +241,7 @@ pub fn validate_catalog(catalog: &Catalog) -> Result<(), String> {
     Ok(())
 }
 
-/// Cada una de las 100 apuestas elige uniformemente un tipo entre 1 y 8192.
+/// Cada una de las 100 apuestas elige uniformemente un tipo entre 1 y 128_000.
 /// Las extracciones son independientes: un mismo tipo puede salir mas de una
 /// vez dentro del mismo paquete o en paquetes diferentes. No hay cuotas
 /// adaptativas ni listas agotables; el RTP condicional permanece en 96,5%.
@@ -250,8 +250,8 @@ pub fn generate_package<R: Rng + ?Sized>(
     number: usize,
     rng: &mut R,
 ) -> Package {
-    let ids: Vec<u16> = (0..BETS_PER_PACKAGE)
-        .map(|_| rng.random_range(1_u16..=TYPES as u16))
+    let ids: Vec<u32> = (0..BETS_PER_PACKAGE)
+        .map(|_| rng.random_range(1_u32..=TYPES as u32))
         .collect();
 
     let total_payout_bps = ids
@@ -271,23 +271,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn paytable_has_128_types_and_exact_9650_bps() {
-        assert_eq!(TIERS.iter().map(|tier| tier.count).sum::<usize>(), 8192);
+    fn paytable_has_128000_types_and_exact_9650_bps() {
+        assert_eq!(TIERS.iter().map(|tier| tier.count).sum::<usize>(), TYPES);
         assert_eq!(theoretical_rtp_bps(), 9_650);
         assert_eq!(
             TIERS
                 .iter()
                 .map(|tier| tier.count as u64 * u64::from(tier.payout_bps))
                 .sum::<u64>(),
-            79_052_800
+            1_235_200_000
         );
     }
 
     #[test]
-    fn all_36_cells_are_valid_and_all_8192_grids_are_unique() {
+    fn all_36_cells_are_valid_and_all_128000_grids_are_unique() {
         let mut rng = rand::rng();
         let catalog = generate_catalog(&mut rng).unwrap();
-        assert_eq!(catalog.outcomes.len(), 8192);
+        assert_eq!(catalog.outcomes.len(), 128_000);
         assert!(validate_catalog(&catalog).is_ok());
         assert!(catalog
             .outcomes
@@ -309,7 +309,7 @@ mod tests {
     #[test]
     fn each_package_has_100_independent_draws_and_repeats_are_allowed() {
         use rand::SeedableRng;
-        let mut rng = rand::rngs::StdRng::seed_from_u64(0x8192_9650);
+        let mut rng = rand::rngs::StdRng::seed_from_u64(0x128_000_9650);
         let catalog = generate_catalog(&mut rng).unwrap();
         let mut repeats = 0_usize;
         let mut frequencies = vec![0_usize; TYPES];
@@ -317,7 +317,7 @@ mod tests {
             let package = generate_package(&catalog, number, &mut rng);
             assert_eq!(package.package, number);
             assert_eq!(package.outcome_ids.len(), 100);
-            assert!(package.outcome_ids.iter().all(|&id| (1..=8192).contains(&id)));
+            assert!(package.outcome_ids.iter().all(|&id| (1..=128_000).contains(&id)));
             repeats += 100 - package.outcome_ids.iter().copied().collect::<HashSet<_>>().len();
             let expected_sum: u64 = package
                 .outcome_ids
