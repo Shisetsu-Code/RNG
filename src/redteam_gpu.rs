@@ -206,3 +206,19 @@ impl GpuAnalyzer {
         Ok(result)
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn wgsl_compute_shader_parses_and_validates_without_physical_gpu() {
+        let module = naga::front::wgsl::parse_str(include_str!("gpu_compute.wgsl"))
+            .expect("WGSL debe tener sintaxis valida");
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .expect("WGSL debe superar validacion semantica Naga");
+    }
+}
