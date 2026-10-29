@@ -1,163 +1,164 @@
-param([switch]$SelfTest)
-# Native Windows Forms interface for the Rust RNG simulator.
+param([switch]$SelfTest, [switch]$TestForm)
+# Interfaz Windows: 128 resultados RNG 6x6 y N paquetes de 100.
 $ErrorActionPreference = 'Stop'
-function TraceGuiStartup {
-    param([string]$Stage)
-    if ($env:RNG_GUI_TEST_FORM -eq '1') {
-        [System.IO.File]::AppendAllText(
-            (Join-Path $env:TEMP 'RNG-GUI-startup.log'),
-            ($Stage + [Environment]::NewLine)
-        )
-    }
-}
-TraceGuiStartup '01-entry'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
-TraceGuiStartup '02-forms-loaded'
 [System.Windows.Forms.Application]::EnableVisualStyles()
-TraceGuiStartup '03-visual-styles'
 if ($SelfTest) {
     Write-Output 'GUI_SELF_TEST_OK'
     exit 0
 }
 $nl = [Environment]::NewLine
-
 $exe = Join-Path $PSScriptRoot 'RNG-6x6-CLI.exe'
 if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
+    if ($TestForm) { throw 'No existe RNG-6x6-CLI.exe; copia el ejecutable Rust.' }
     [void][System.Windows.Forms.MessageBox]::Show(
-        ("No se encuentra RNG-6x6-CLI.exe." + $nl + $nl + "Extrae TODOS los archivos del ZIP en la misma carpeta."),
-        'RNG 6x6 - Archivo faltante',
+        ('No se encuentra RNG-6x6-CLI.exe.' + $nl + 'Descomprime TODOS los archivos del ZIP en la misma carpeta.'),
+        'RNG - Falta un archivo',
         [System.Windows.Forms.MessageBoxButtons]::OK,
         [System.Windows.Forms.MessageBoxIcon]::Error
     )
     exit 1
 }
 
-TraceGuiStartup '04-before-form'
 $form = New-Object System.Windows.Forms.Form
-TraceGuiStartup '05-after-form'
-$form.Text = 'RNG 6x6 | Simulador local de 128 saldos'
-$form.ClientSize = New-Object System.Drawing.Size(740, 670)
-$form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen
-$form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedSingle
+$form.Text = 'RNG 6x6 - Generador de paquetes de 100 apuestas'
+$form.ClientSize = New-Object System.Drawing.Size(780, 685)
+$form.StartPosition = 'CenterScreen'
+$form.FormBorderStyle = 'FixedSingle'
 $form.MaximizeBox = $false
-$form.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::Dpi
+$form.AutoScaleMode = 'Dpi'
 $form.Font = New-Object System.Drawing.Font('Segoe UI', 10)
 $form.BackColor = [System.Drawing.Color]::FromArgb(248, 250, 252)
 
-function AddLabel {
-    param([string]$Text, [int]$Top, [int]$Left = 25, [int]$Width = 680)
+function Add-Label {
+    param([string]$Text, [int]$X, [int]$Y, [int]$Width = 720, [int]$Height = 24)
     $label = New-Object System.Windows.Forms.Label
     $label.Text = $Text
-    $label.Location = New-Object System.Drawing.Point($Left, $Top)
-    $label.Size = New-Object System.Drawing.Size($Width, 26)
+    $label.Location = New-Object System.Drawing.Point($X, $Y)
+    $label.Size = New-Object System.Drawing.Size($Width, $Height)
     $form.Controls.Add($label)
     return $label
 }
-
-function AddTextBox {
-    param([string]$Value, [int]$Top, [int]$Left = 25, [int]$Width = 315)
+function Add-TextBox {
+    param([string]$Value, [int]$X, [int]$Y, [int]$Width)
     $box = New-Object System.Windows.Forms.TextBox
+    $box.Location = New-Object System.Drawing.Point($X, $Y)
+    $box.Size = New-Object System.Drawing.Size($Width, 30)
     $box.Text = $Value
-    $box.Location = New-Object System.Drawing.Point($Left, $Top)
-    $box.Size = New-Object System.Drawing.Size($Width, 28)
     $form.Controls.Add($box)
     return $box
 }
+function Add-CheckBox {
+    param([string]$Text, [int]$X, [int]$Y, [int]$Width = 700, [bool]$Checked = $false)
+    $check = New-Object System.Windows.Forms.CheckBox
+    $check.Location = New-Object System.Drawing.Point($X, $Y)
+    $check.Size = New-Object System.Drawing.Size($Width, 29)
+    $check.Text = $Text
+    $check.Checked = $Checked
+    $form.Controls.Add($check)
+    return $check
+}
+function Get-PositiveInteger {
+    param([string]$Value, [string]$Name)
+    [long]$n = 0
+    if (-not [long]::TryParse($Value.Trim(), [ref]$n) -or $n -lt 1) {
+        throw "$Name debe ser un numero entero mayor que cero."
+    }
+    return $n
+}
 
-TraceGuiStartup '06-before-controls'
-$title = AddLabel 'SIMULADOR RNG 6 x 6' 18
-$title.Font = New-Object System.Drawing.Font('Segoe UI', 17, [System.Drawing.FontStyle]::Bold)
-$title.Height = 42
-$subtitle = AddLabel 'RTP teorico: 96,5%   |   128 saldos   |   Ejecucion local sin internet' 63
-$subtitle.ForeColor = [System.Drawing.Color]::FromArgb(75, 85, 99)
+$title = Add-Label 'GENERADOR RNG 6 x 6' 26 18 710 42
+$title.Font = New-Object System.Drawing.Font('Segoe UI', 19, [System.Drawing.FontStyle]::Bold)
+$subtitle = Add-Label '128 matrices distintas  |  100 apuestas por paquete  |  RTP teorico 96,5%' 28 66
+$subtitle.ForeColor = [System.Drawing.Color]::FromArgb(65, 78, 98)
 
-[void](AddLabel 'Cantidad de apuestas' 107)
-$countBox = AddTextBox '10000' 137 25 330
-$totalRadio = New-Object System.Windows.Forms.RadioButton
-$totalRadio.Text = 'Total entre los 128 saldos'
-$totalRadio.Location = New-Object System.Drawing.Point(375, 139)
-$totalRadio.Size = New-Object System.Drawing.Size(320, 27)
-$totalRadio.Checked = $true
-$form.Controls.Add($totalRadio)
-$perWalletRadio = New-Object System.Windows.Forms.RadioButton
-$perWalletRadio.Text = 'Esa cantidad para CADA saldo'
-$perWalletRadio.Location = New-Object System.Drawing.Point(375, 170)
-$perWalletRadio.Size = New-Object System.Drawing.Size(320, 27)
-$form.Controls.Add($perWalletRadio)
+[void](Add-Label '¿Cuantos paquetes queres generar?' 28 114)
+$countBox = Add-TextBox '100' 28 146 300
+$countHint = Add-Label '100 paquetes = 10.000 apuestas' 348 149 380
+$countHint.ForeColor = [System.Drawing.Color]::FromArgb(65, 78, 98)
+$countBox.Add_TextChanged({
+    [long]$n = 0
+    if ([long]::TryParse($countBox.Text, [ref]$n) -and $n -gt 0) {
+        $countHint.Text = ('{0:N0} paquetes = {1:N0} apuestas' -f $n, ($n * 100))
+    } else {
+        $countHint.Text = 'Ingresa un numero valido.'
+    }
+})
 
-[void](AddLabel 'Importe por apuesta (multiplo de 48)' 206 25 320)
-$betBox = AddTextBox '48' 236 25 315
-[void](AddLabel 'Saldo inicial del primer monedero' 206 375 315)
-$balanceBox = AddTextBox '1000000' 236 375 315
-[void](AddLabel 'Incremento entre saldos iniciales' 283 25 350)
-$stepBox = AddTextBox '10000' 314 25 315
+[void](Add-Label 'Carpeta donde guardar el catalogo y los paquetes' 28 199)
+$outputBox = Add-TextBox (Join-Path $PSScriptRoot 'salida_rng') 28 232 630
+$chooseFolder = New-Object System.Windows.Forms.Button
+$chooseFolder.Text = '...'
+$chooseFolder.Location = New-Object System.Drawing.Point(674, 230)
+$chooseFolder.Size = New-Object System.Drawing.Size(65, 32)
+$form.Controls.Add($chooseFolder)
+$chooseFolder.Add_Click({
+    $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
+    $dialog.Description = 'Selecciona la carpeta para guardar los resultados RNG'
+    $dialog.SelectedPath = $PSScriptRoot
+    if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+        $outputBox.Text = $dialog.SelectedPath
+    }
+    $dialog.Dispose()
+})
 
-$csvCheck = New-Object System.Windows.Forms.CheckBox
-$csvCheck.Text = 'Guardar resultados.csv junto al programa'
-$csvCheck.Location = New-Object System.Drawing.Point(375, 313)
-$csvCheck.Size = New-Object System.Drawing.Size(340, 29)
-$csvCheck.Checked = $true
-$form.Controls.Add($csvCheck)
+$reuseCheck = Add-CheckBox 'Reutilizar los mismos 128 tipos si el catalogo ya existe' 28 286 720 $true
+$compactCheck = Add-CheckBox 'Paquetes compactos: guardar solo IDs (matrices en catalogo_128.json)' 28 318 730 $false
+$splitCheck = Add-CheckBox 'Ademas, generar un archivo JSON por cada paquete' 28 350 720 $false
 
 $startButton = New-Object System.Windows.Forms.Button
-$startButton.Text = 'EJECUTAR SIMULACION'
-$startButton.Font = New-Object System.Drawing.Font('Segoe UI', 10, [System.Drawing.FontStyle]::Bold)
-$startButton.Location = New-Object System.Drawing.Point(25, 367)
-$startButton.Size = New-Object System.Drawing.Size(330, 44)
-$startButton.BackColor = [System.Drawing.Color]::FromArgb(36, 99, 235)
+$startButton.Text = 'GENERAR PAQUETES'
+$startButton.Font = New-Object System.Drawing.Font('Segoe UI', 11, [System.Drawing.FontStyle]::Bold)
+$startButton.Location = New-Object System.Drawing.Point(28, 398)
+$startButton.Size = New-Object System.Drawing.Size(340, 49)
+$startButton.BackColor = [System.Drawing.Color]::FromArgb(35, 103, 218)
 $startButton.ForeColor = [System.Drawing.Color]::White
-$startButton.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+$startButton.FlatStyle = 'Flat'
 $form.Controls.Add($startButton)
 
 $cancelButton = New-Object System.Windows.Forms.Button
 $cancelButton.Text = 'CANCELAR'
-$cancelButton.Location = New-Object System.Drawing.Point(375, 367)
-$cancelButton.Size = New-Object System.Drawing.Size(150, 44)
+$cancelButton.Location = New-Object System.Drawing.Point(392, 398)
+$cancelButton.Size = New-Object System.Drawing.Size(150, 49)
 $cancelButton.Enabled = $false
 $form.Controls.Add($cancelButton)
 
-$statusLabel = AddLabel 'Preparado para ejecutar.' 426
+$statusLabel = Add-Label 'Listo para generar los paquetes.' 28 459 720
 $statusLabel.ForeColor = [System.Drawing.Color]::FromArgb(55, 65, 81)
 
 $progress = New-Object System.Windows.Forms.ProgressBar
-$progress.Location = New-Object System.Drawing.Point(25, 454)
-$progress.Size = New-Object System.Drawing.Size(680, 12)
-$progress.Style = [System.Windows.Forms.ProgressBarStyle]::Marquee
+$progress.Location = New-Object System.Drawing.Point(28, 489)
+$progress.Size = New-Object System.Drawing.Size(711, 13)
+$progress.Style = 'Marquee'
 $progress.MarqueeAnimationSpeed = 0
 $form.Controls.Add($progress)
 
 $output = New-Object System.Windows.Forms.TextBox
+$output.Location = New-Object System.Drawing.Point(28, 518)
+$output.Size = New-Object System.Drawing.Size(711, 136)
 $output.Multiline = $true
 $output.ReadOnly = $true
-$output.ScrollBars = [System.Windows.Forms.ScrollBars]::Vertical
+$output.ScrollBars = 'Vertical'
 $output.WordWrap = $false
 $output.Font = New-Object System.Drawing.Font('Consolas', 9)
-$output.Location = New-Object System.Drawing.Point(25, 482)
-$output.Size = New-Object System.Drawing.Size(680, 157)
-$output.Text = "Elige una cantidad y haz clic en EJECUTAR SIMULACION." + $nl + "Puedes cancelar una ejecucion desde esta ventana." + $nl + "Un total puede ser menor al solicitado si no alcanza el saldo."
+$output.Text = 'Se crea un catalogo de 128 matrices 6x6.' + $nl +
+    'Cada paquete contiene 100 tipos diferentes, elegidos aleatoriamente.' + $nl +
+    'Los paquetes se guardan en paquetes.jsonl (un JSON por linea).'
 $form.Controls.Add($output)
 
-TraceGuiStartup '07-controls-constructed'
 $script:process = $null
 $script:startedAt = [datetime]::MinValue
-
-function ReadPositiveUlong {
-    param([string]$InputText, [string]$Description, [uint64]$Minimum)
-    [uint64]$value = 0
-    if (-not [uint64]::TryParse($InputText.Trim(), [ref]$value) -or $value -lt $Minimum) {
-        throw "$Description debe ser un numero entero mayor o igual a $Minimum."
-    }
-    return $value
-}
+$script:stdoutPath = ''
+$script:stderrPath = ''
 
 $timer = New-Object System.Windows.Forms.Timer
-$timer.Interval = 250
+$timer.Interval = 500
 $timer.Add_Tick({
     if ($null -eq $script:process) { return }
     if (-not $script:process.HasExited) {
-        $elapsed = ([datetime]::Now - $script:startedAt).TotalSeconds
-        $statusLabel.Text = ('Simulando... {0:N1} segundos. Puedes cancelar.' -f $elapsed)
+        $seconds = ([datetime]::Now - $script:startedAt).TotalSeconds
+        $statusLabel.Text = ('Generando... {0:N1} segundos. Se puede cancelar.' -f $seconds)
         return
     }
     $timer.Stop()
@@ -165,19 +166,23 @@ $timer.Add_Tick({
     $startButton.Enabled = $true
     $cancelButton.Enabled = $false
     try {
-        $stdout = $script:process.StandardOutput.ReadToEnd()
-        $stderr = $script:process.StandardError.ReadToEnd()
         $exitCode = $script:process.ExitCode
+        $logText = if (Test-Path $script:stdoutPath) { [System.IO.File]::ReadAllText($script:stdoutPath) } else { '' }
+        $errorText = if (Test-Path $script:stderrPath) { [System.IO.File]::ReadAllText($script:stderrPath) } else { '' }
         if ($exitCode -eq 0) {
-            $statusLabel.Text = 'Completado correctamente.'
-            $output.Text = $stdout
+            $statusLabel.Text = 'Paquetes generados correctamente.'
+            $output.Text = $logText.Substring([Math]::Max(0, $logText.Length - 7000))
         } else {
-            $statusLabel.Text = "Error de ejecucion (codigo $exitCode)."
-            $output.Text = ($stderr + $nl + $stdout)
+            $statusLabel.Text = "Error al generar (codigo $exitCode)."
+            $output.Text = $errorText + $nl + $logText
+            [void][System.Windows.Forms.MessageBox]::Show(
+                ('El programa devolvio un error.' + $nl + $errorText),
+                'RNG - Error de simulacion'
+            )
         }
     } catch {
-        $statusLabel.Text = 'No fue posible leer la salida.'
-        $output.Text = $_.Exception.Message
+        $statusLabel.Text = 'No se pudo leer el reporte.'
+        $output.Text = $_.Exception.ToString()
     } finally {
         $script:process.Dispose()
         $script:process = $null
@@ -186,52 +191,51 @@ $timer.Add_Tick({
 
 $startButton.Add_Click({
     try {
-        [uint64]$count = ReadPositiveUlong $countBox.Text 'Cantidad de apuestas' 1
-        [uint64]$bet = ReadPositiveUlong $betBox.Text 'Importe por apuesta' 48
-        [uint64]$balance = ReadPositiveUlong $balanceBox.Text 'Saldo inicial' 0
-        [uint64]$step = ReadPositiveUlong $stepBox.Text 'Incremento entre saldos' 1
-        if ($bet % 48 -ne 0) {
-            throw 'El importe por apuesta debe ser multiplo de 48.'
+        $count = Get-PositiveInteger $countBox.Text 'Cantidad de paquetes'
+        $dir = $outputBox.Text.Trim()
+        if ([string]::IsNullOrWhiteSpace($dir)) {
+            throw 'Ingresa una carpeta de salida.'
         }
-        if ($perWalletRadio.Checked -and $count -gt ([uint64]::MaxValue / 128)) {
-            throw 'La cantidad de apuestas por saldo es demasiado grande.'
+        if ($splitCheck.Checked -and $count -gt 10000) {
+            $choice = [System.Windows.Forms.MessageBox]::Show(
+                'Vas a crear mas de 10.000 archivos individuales. ¿Continuar?',
+                'RNG - Muchos archivos',
+                [System.Windows.Forms.MessageBoxButtons]::YesNo,
+                [System.Windows.Forms.MessageBoxIcon]::Warning
+            )
+            if ($choice -ne [System.Windows.Forms.DialogResult]::Yes) { return }
+        }
+        if (-not (Test-Path -LiteralPath $dir)) {
+            [void][System.IO.Directory]::CreateDirectory($dir)
+        }
+        $arguments = '--packages ' + $count + ' --out "' + $dir + '"'
+        if ($compactCheck.Checked) { $arguments += ' --compact' }
+        if ($splitCheck.Checked) { $arguments += ' --split-files' }
+        $previousCatalog = Join-Path $dir 'catalogo_128.json'
+        if ($reuseCheck.Checked -and (Test-Path -LiteralPath $previousCatalog)) {
+            $arguments += ' --reuse-catalog "' + $previousCatalog + '"'
         }
 
-        $mode = if ($totalRadio.Checked) { '--total-spins' } else { '--spins' }
-        $parameters = "$mode $count --bet $bet --base-balance $balance --balance-step $step --summary-only"
-
-        if ($csvCheck.Checked) {
-            $csvFile = Join-Path $PSScriptRoot 'resultados.csv'
-            $parameters += ' --csv "' + $csvFile + '"'
-        }
-        $psi = New-Object System.Diagnostics.ProcessStartInfo
-        $psi.FileName = $exe
-        $psi.Arguments = $parameters
-        $psi.WorkingDirectory = $PSScriptRoot
-        $psi.UseShellExecute = $false
-        $psi.CreateNoWindow = $true
-        $psi.RedirectStandardOutput = $true
-        $psi.RedirectStandardError = $true
-        $psi.StandardOutputEncoding = [System.Text.Encoding]::UTF8
-        $psi.StandardErrorEncoding = [System.Text.Encoding]::UTF8
-
-        $script:process = New-Object System.Diagnostics.Process
-        $script:process.StartInfo = $psi
-        if (-not $script:process.Start()) {
-            throw 'Windows no pudo iniciar el simulador Rust.'
+        $script:stdoutPath = Join-Path $dir 'ejecucion.log'
+        $script:stderrPath = Join-Path $dir 'errores.log'
+        $script:process = Start-Process -FilePath $exe -ArgumentList $arguments -WorkingDirectory $PSScriptRoot -WindowStyle Hidden -RedirectStandardOutput $script:stdoutPath -RedirectStandardError $script:stderrPath -PassThru
+        if ($null -eq $script:process) {
+            throw 'Windows no pudo iniciar RNG-6x6-CLI.exe.'
         }
         $script:startedAt = [datetime]::Now
         $startButton.Enabled = $false
         $cancelButton.Enabled = $true
         $progress.MarqueeAnimationSpeed = 25
-        $output.Text = "Calculando..." + $nl + "Cantidad solicitada: $count" + $nl + "Modo: $mode" + $nl + "El RNG no cambia sus probabilidades por saldo."
-        $statusLabel.Text = 'Simulacion en ejecucion...'
+        $statusLabel.Text = 'Generacion en ejecucion...'
+        $output.Text = "Paquetes solicitados: $count" + $nl +
+            "Apuestas solicitadas: $($count * 100)" + $nl +
+            "Salida: $dir"
         $timer.Start()
     } catch {
-        $statusLabel.Text = 'Error al iniciar la simulacion.'
+        $statusLabel.Text = 'Error de inicio.'
         $output.Text = $_.Exception.ToString()
         [void][System.Windows.Forms.MessageBox]::Show(
-            $_.Exception.Message, 'RNG 6x6 - Error',
+            $_.Exception.Message, 'RNG - Error',
             [System.Windows.Forms.MessageBoxButtons]::OK,
             [System.Windows.Forms.MessageBoxIcon]::Error
         )
@@ -243,8 +247,7 @@ $cancelButton.Add_Click({
     if ($null -ne $script:process) {
         try {
             if (-not $script:process.HasExited) {
-                $script:process.Kill()
-                $script:process.WaitForExit(2000) | Out-Null
+                Stop-Process -Id $script:process.Id -Force -ErrorAction Stop
             }
         } catch {
             $output.Text = $_.Exception.Message
@@ -254,26 +257,28 @@ $cancelButton.Add_Click({
         }
     }
     $progress.MarqueeAnimationSpeed = 0
-    $startButton.Enabled = $true
     $cancelButton.Enabled = $false
-    $statusLabel.Text = 'Simulacion cancelada.'
-    $output.Text = 'Cancelada. Puedes iniciar otra simulacion.'
+    $startButton.Enabled = $true
+    $statusLabel.Text = 'Generacion cancelada.'
+    $output.Text = 'Cancelado. Algunos archivos parciales pueden permanecer en la carpeta.'
 })
 
 $form.Add_FormClosing({
     $timer.Stop()
     if ($null -ne $script:process) {
         try {
-            if (-not $script:process.HasExited) { $script:process.Kill() }
+            if (-not $script:process.HasExited) {
+                Stop-Process -Id $script:process.Id -Force
+            }
         } catch {}
         $script:process.Dispose()
         $script:process = $null
     }
 })
-if ($env:RNG_GUI_TEST_FORM -eq '1') {
+
+if ($TestForm) {
     Write-Output 'GUI_FORM_CREATED_OK'
     $form.Dispose()
     exit 0
 }
-TraceGuiStartup '08-events-registered'
 [void][System.Windows.Forms.Application]::Run($form)
