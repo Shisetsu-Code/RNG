@@ -1,3 +1,4 @@
+param([switch]$SelfTest)
 # Native Windows Forms interface for the Rust RNG simulator.
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
@@ -249,4 +250,8 @@ $form.Add_FormClosing({
         $script:process = $null
     }
 })
+if ($SelfTest) {
+    Write-Output 'GUI_SELF_TEST_OK'
+    exit 0
+}
 [void][System.Windows.Forms.Application]::Run($form)
