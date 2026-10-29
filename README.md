@@ -15,7 +15,9 @@ Proyecto Rust para Windows y terminal. Genera **8.192 matrices únicas de 6×6**
 
 ### Seguridad matemática
 
-Cada apuesta sigue teniendo los 8.192 tipos disponibles, incluso después de observar 99 resultados del mismo paquete. Esto evita la fuga de información por agotamiento de tipos que tenía la versión antigua sin reposición.
+Cada apuesta sigue teniendo los 8.192 tipos disponibles, incluso después de observar 99 resultados del mismo paquete. Esto evita la fuga por descarte de tipos de la versión antigua sin reposición.
+
+Incluso en el modelo histórico sin reposición, con 8192 tipos y solo 100 extracciones, el RTP condicional máximo es 97,6805%, por debajo del 100%; el dato descartado sigue filtrando ligeramente información sobre IDs, pero no ofrece por sí solo una apuesta de valor esperado positivo. 
 
 No garantizamos 96,5% de retorno en cada paquete ni que todos los IDs aparezcan el mismo número de veces: hacerlo mediante cuotas adaptativas introduciría dependencias aprovechables. El RTP es **teórico**, no un objetivo que se fuerce con resultados futuros.
 
