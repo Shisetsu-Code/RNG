@@ -134,7 +134,7 @@ fn random_grid<R: Rng + ?Sized>(rng: &mut R) -> Grid {
 
 /// Genera 8192 matrices distintas, respetando exactamente la cuota de
 /// resultados de cada clase. El muestreo es uniforme dentro de cada clase.
-/// Finalmente mezcla las matrices y les asigna un identificador 1..128.
+/// Finalmente mezcla las matrices y les asigna un identificador 1..8192.
 pub fn generate_catalog<R: Rng + ?Sized>(rng: &mut R) -> Result<Catalog, String> {
     if theoretical_rtp_bps() != RTP_TARGET_BPS {
         return Err("la tabla de resultados no cumple RTP 96,5%".to_owned());
