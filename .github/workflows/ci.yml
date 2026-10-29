@@ -85,9 +85,12 @@ jobs:
           $stdoutPath = Join-Path $env:RUNNER_TEMP 'rng-gui-form-stdout.txt'
           $stderrPath = Join-Path $env:RUNNER_TEMP 'rng-gui-form-stderr.txt'
           $proc = Start-Process -FilePath powershell.exe -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-STA', '-File', '.\RNG-6x6-GUI.ps1') -WorkingDirectory $PWD.Path -WindowStyle Hidden -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -PassThru
-          if (-not $proc.WaitForExit(20000)) {
+          if (-not $proc.WaitForExit(12000)) {
             $proc.Kill()
-            throw "GUI control-construction test timed out"
+            $startupLog = Join-Path $env:TEMP 'RNG-GUI-startup.log'
+            $markers = if (Test-Path $startupLog) { Get-Content $startupLog -Raw } else { '(no startup log)' }
+            $stderr = if (Test-Path $stderrPath) { Get-Content $stderrPath -Raw } else { '(no stderr)' }
+            throw "GUI control-construction test timed out after markers: $markers / Errors: $stderr"
           }
           $formOutput = Get-Content $stdoutPath -Raw
           $formErrors = Get-Content $stderrPath -Raw
