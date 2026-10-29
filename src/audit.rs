@@ -6,7 +6,7 @@
 //! Estos tests no constituyen certificacion criptografica.
 
 use crate::{BASIS_POINTS, BETS_PER_PACKAGE, Catalog, TYPES};
-use rand::{Rng, RngExt};
+use rand::Rng;
 use rand::seq::SliceRandom;
 use serde::Serialize;
 use std::collections::HashSet;
