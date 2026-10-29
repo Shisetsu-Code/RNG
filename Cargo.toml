@@ -1,14 +1,16 @@
 [package]
 name = "rng-grid"
 default-run = "rng-grid"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.85"
-description = "Provably calibrated 6x6 RNG simulation with 128 independent wallet balances"
+description = "6x6 RNG: 128 fixed outcome types with 96.5% theoretical RTP, shuffled into 100-bet packages"
 publish = false
 
 [dependencies]
 rand = { version = "=0.10.3", features = ["unbiased"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 [profile.release]
 lto = "thin"
