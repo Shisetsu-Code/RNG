@@ -15,7 +15,7 @@ set /p PAQUETES="Cantidad de paquetes por modelo [10000]: "
 if "%PAQUETES%"=="" set PAQUETES=10000
 set "MODE=all"
 echo.
-echo Modos: 1=Todos (recomendado), 2=Actual sin reposicion, 3=Independiente
+echo Modos: 1=Todos, 2=Historico sin reposicion, 3=Actual independiente
 set /p MODE_CHOICE="Elegir [1]: "
 if "%MODE_CHOICE%"=="2" set "MODE=without"
 if "%MODE_CHOICE%"=="3" set "MODE=independent"
@@ -26,9 +26,9 @@ if not "%MODE%"=="independent" (
 )
 echo.
 echo Ejecutando auditoria...
-if exist "%~dp0salida_rng\catalogo_128.json" (
+if exist "%~dp0salida_rng\catalogo_8192.json" (
   echo Usando el catalogo ACTUAL del generador de paquetes.
-  "%~dp0RNG-6x6-AUDITOR.exe" --packages %PAQUETES% --mode %MODE% --catalog "%~dp0salida_rng\catalogo_128.json" --out "%~dp0auditoria_rng" %GPUFLAG%
+  "%~dp0RNG-6x6-AUDITOR.exe" --packages %PAQUETES% --mode %MODE% --catalog "%~dp0salida_rng\catalogo_8192.json" --out "%~dp0auditoria_rng" %GPUFLAG%
 ) else (
   echo No hay catalogo previo; se creara un catalogo de prueba.
   "%~dp0RNG-6x6-AUDITOR.exe" --packages %PAQUETES% --mode %MODE% --out "%~dp0auditoria_rng" %GPUFLAG%
