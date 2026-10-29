@@ -6,7 +6,7 @@
 //! No prueba que el CSPRNG sea seguro; detecta patrones estadisticos.
 
 use crate::audit::{Mode, sample_trace};
-use crate::{BETS_PER_PACKAGE, Catalog, TYPES};
+use crate::{Catalog, TYPES};
 use rand::Rng;
 use serde::Serialize;
 use std::time::Instant;
