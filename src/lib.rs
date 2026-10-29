@@ -206,7 +206,7 @@ pub fn validate_catalog(catalog: &Catalog) -> Result<(), String> {
     let mut total_bps = 0_u64;
 
     for (index, outcome) in catalog.outcomes.iter().enumerate() {
-        if usize::from(outcome.id) != index + 1 {
+        if outcome.id as usize != index + 1 {
             return Err(format!("id de tipo incorrecto: {}", outcome.id));
         }
         if outcome.grid.iter().flatten().any(|&symbol| symbol >= SYMBOLS) {
@@ -256,7 +256,7 @@ pub fn generate_package<R: Rng + ?Sized>(
 
     let total_payout_bps = ids
         .iter()
-        .map(|&id| u64::from(catalog.outcomes[usize::from(id) - 1].payout_bps))
+        .map(|&id| u64::from(catalog.outcomes[id as usize - 1].payout_bps))
         .sum();
 
     Package {
@@ -323,8 +323,8 @@ mod tests {
                 .outcome_ids
                 .iter()
                 .map(|&id| {
-                    frequencies[usize::from(id) - 1] += 1;
-                    u64::from(catalog.outcomes[usize::from(id) - 1].payout_bps)
+                    frequencies[id as usize - 1] += 1;
+                    u64::from(catalog.outcomes[id as usize - 1].payout_bps)
                 })
                 .sum();
             assert_eq!(package.total_payout_bps, expected_sum);
