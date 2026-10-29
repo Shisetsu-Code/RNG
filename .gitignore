@@ -1,0 +1,4 @@
+/target/
+/resultados.csv
+/report.csv
+*.profraw
