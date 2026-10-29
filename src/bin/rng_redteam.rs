@@ -26,7 +26,7 @@ enum Selection {
 struct SecurityReport {
     version: u32,
     tested_packages_per_mode: u64,
-    generated_bets_per_mode: u128,
+    generated_bets_per_mode: u8192,
     catalog_size: usize,
     catalog_rtp_percent: f64,
     gpu: Option<GpuReport>,
@@ -75,13 +75,13 @@ fn usage() {
          \n\
          Uso: rng_redteam.exe [opciones]\n\
          --packages N               Paquetes de 100 apuestas por modelo (default: 10000)\n\
-         --mode all                  3 modos: seguro sin reemplazo, independiente y control debil\n\
-         --mode without              Solo paquetes actuales, 100 sin reemplazo\n\
-         --mode independent          100 sorteos independientes con reemplazo\n\
+         --mode all                  3 modelos: actual, historico y control debil\n\
+         --mode without              Modelo antiguo: 100 sin reposicion\n\
+         --mode independent          Motor ACTUAL: 100 sorteos independientes\n\
          --mode weak                 Control deliberadamente inseguro (secuencia +1)\n\
          --catalog archivo.json      Reutiliza catalogo_128.json existente\n\
          --out carpeta               Directorio de informes (default: auditoria_rng)\n\
-         --gpu                       Analisis GPU adicional: wgpu/DX12/Vulkan\n\
+         --gpu                       GPU para riesgo historico sin reposicion\n\
          --gpu-batch N               Tamaño de lote GPU en paquetes (default: 50000)\n\
          --help                      Muestra esta ayuda\n\
          \n\
@@ -160,8 +160,8 @@ fn load_catalog(path: Option<&Path>) -> Result<Catalog, Box<dyn Error>> {
 
 fn modes(choice: Selection) -> &'static [Mode] {
     const ALL: &[Mode] = &[
-        Mode::WithoutReplacement,
         Mode::WithReplacement,
+        Mode::WithoutReplacement,
         Mode::WeakCounter,
     ];
     match choice {
@@ -348,7 +348,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
     let mut rng = rand::rng();
 
     println!("LABORATORIO: GENERADOR vs ATACANTE");
-    println!("128 matrices 6x6 | RTP teorico: 96,5% | {} paquetes por modelo", options.packages);
+    println!("8192 matrices 6x6 | RTP teorico: 96,5% | {} paquetes por modelo", options.packages);
     for &mode in modes(options.mode) {
         println!("\nAnalizando modelo {}...", mode.label());
 
@@ -372,23 +372,17 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
     }
 
     let notes = vec![
-        "RNG criptografico != proceso de apuestas seguro. \
-         No repetir IDs dentro de 100 revela exclusiones a un atacante."
+        "Motor actual: cada apuesta extrae de manera uniforme un tipo entre 8192,          con reposicion e independencia entre apuestas."
             .to_owned(),
-        "Si el jugador conoce tipos anteriores y decide cuando apostar, \
-         puede seleccionar condiciones con retorno esperado superior a 100%."
+        "El reparto de tipos es uniforme en esperanza. No se puede garantizar          que un conjunto finito tenga frecuencias iguales sin introducir          dependencia y potencial fuga de informacion."
             .to_owned(),
-        "No revelar los 100 resultados futuros ni el estado/semilla del RNG. \
-         El servidor debe validar y fijar la apuesta ANTES de sortear/servir el resultado."
+        "El modelo antiguo de 100 sin reposicion sigue solo como prueba          contrafactual: reduce tipos posibles segun lo observado."
             .to_owned(),
-        "Alternativa defensiva: muestreo independiente con reemplazo. \
-         Cada apuesta tiene 128 posibilidades y RTP condicional fijo en 96,5%."
+        "La apuesta y su saldo deben validarse en servidor antes de sortear,          y no se deben exponer secuencias futuras ni estado del RNG."
             .to_owned(),
-        "Las pruebas estadisticas NO demuestran resistencia criptografica \
-         ni sustituyen auditoria y certificacion del producto."
+        "Pasar pruebas estadisticas NO demuestra la seguridad criptografica          ni sustituye la auditoria independiente."
             .to_owned(),
-        "La GPU solo acelera el analisis de lotes, nunca genera semillas \
-         ni resultados financieros de produccion."
+        "La GPU analiza lotes preexistentes, sin generar RNG ni semillas.          La aceleracion real debe medirse en hardware local."
             .to_owned(),
     ];
 
@@ -396,7 +390,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
         version: 1,
         tested_packages_per_mode: options.packages,
         generated_bets_per_mode: u128::from(options.packages) * 100,
-        catalog_size: 128,
+        catalog_size: 8192,
         catalog_rtp_percent: 96.5,
         gpu: gpu_report,
         runs: reports,
