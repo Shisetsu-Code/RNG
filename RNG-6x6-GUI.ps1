@@ -4,6 +4,10 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
+if ($SelfTest) {
+    Write-Output 'GUI_SELF_TEST_OK'
+    exit 0
+}
 $nl = [Environment]::NewLine
 
 $exe = Join-Path $PSScriptRoot 'RNG-6x6-CLI.exe'
@@ -250,8 +254,4 @@ $form.Add_FormClosing({
         $script:process = $null
     }
 })
-if ($SelfTest) {
-    Write-Output 'GUI_SELF_TEST_OK'
-    exit 0
-}
 [void][System.Windows.Forms.Application]::Run($form)
