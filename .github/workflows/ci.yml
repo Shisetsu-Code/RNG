@@ -1,4 +1,5 @@
-name: Rust RNG CI
+name: Rust RNG 6x6 - 128 tipos / paquetes de 100
+
 on:
   push:
     branches: [main]
@@ -9,8 +10,8 @@ permissions:
   contents: read
 
 jobs:
-  test:
-    name: Rust tests, lint and interactive smoke test (Linux)
+  rust-checks:
+    name: Rust tests, Clippy and end-to-end packages
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -19,26 +20,73 @@ jobs:
         with:
           persist-credentials: false
       - name: Rust stable and Clippy
+        shell: bash
         run: |
           rustup update stable
           rustup default stable
           rustup component add clippy
-      - name: Unit tests
+      - name: Run unit tests
         run: cargo test --all-targets
-      - name: Clippy
+      - name: Check Clippy without warnings
         run: cargo clippy --all-targets -- -D warnings
-      - name: Verify 128 unique-wallet CSV with total bets
+      - name: Generate 7 batches of 100 in compact mode and split files
+        shell: bash
         run: |
-          cargo run --release -- --total-spins 257 --summary-only --csv report.csv
-          test "$(wc -l < report.csv)" -eq 129
-          test "$(awk -F, 'NR>1 {n+=$4} END {print n}' report.csv)" -eq 257
-      - name: Verify interactive prompts through standard input
+          cargo run --release -- --packages 7 --out smoke --compact --split-files
+      - name: Verify all 128 patterns and 700 bets
+        shell: bash
         run: |
-          printf '257\n1\n48\n1000000\n10000\nn\n' | cargo run --release -- > interactive.log
-          grep -q 'Apuestas realizadas: 257' interactive.log
+          python3 - <<'PY'
+          import json
+          from collections import Counter
+          from pathlib import Path
+
+          folder = Path("smoke")
+          catalog = json.loads((folder / "catalogo_128.json").read_text())
+          outcomes = catalog["outcomes"]
+          assert len(outcomes) == 128
+          assert len({tuple(sum(item["grid"], [])) for item in outcomes}) == 128
+          assert all(len(grid) == 6 and all(len(row) == 6 for row in grid) for grid in (x["grid"] for x in outcomes))
+          assert sum(o["payout_bps"] for o in outcomes) == 128 * 9650
+          assert dict(Counter(x["payout_bps"] for x in outcomes)) == {
+              0: 64, 10000: 32, 15000: 16, 20000: 8,
+              35200: 1, 40000: 4, 80000: 2, 160000: 1
+          }
+          packages = [json.loads(line) for line in (folder / "paquetes.jsonl").read_text().splitlines()]
+          assert len(packages) == 7
+          for i, package in enumerate(packages, 1):
+              ids = package["outcome_ids"]
+              assert package["package"] == i
+              assert len(ids) == len(set(ids)) == 100
+              assert all(1 <= item <= 128 for item in ids)
+              expected = sum(outcomes[item-1]["payout_bps"] for item in ids)
+              assert package["total_payout_bps"] == expected
+              assert (folder / "paquetes" / f"paquete_{i:06}.json").exists()
+          assert len((folder / "resumen_paquetes.csv").read_text().splitlines()) == 8
+          assert len((folder / "catalogo_128.csv").read_text().splitlines()) == 129
+          print("OK: 128 unique types and seven validated packages of 100.")
+          PY
+      - name: Test reuse and embedded full matrices
+        shell: bash
+        run: |
+          cargo run --release -- --packages 3 --reuse-catalog smoke/catalogo_128.json --out full
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          original = json.loads(Path("smoke/catalogo_128.json").read_text())
+          reused = json.loads(Path("full/catalogo_128.json").read_text())
+          assert original == reused
+          packages = [json.loads(line) for line in Path("full/paquetes.jsonl").read_text().splitlines()]
+          assert len(packages) == 3
+          for package in packages:
+              assert len(package["bets"]) == 100
+              assert len({x["id"] for x in package["bets"]}) == 100
+              assert sum(x["payout_bps"] for x in package["bets"]) == package["total_payout_bps"]
+          print("OK: unchanged catalog, embedded 6x6 matrices and exactly 100 bets.")
+          PY
 
   windows-portable:
-    name: Build and test Windows portable .exe (x64)
+    name: Build GUI+CLI for Windows x64 and test startup
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -46,24 +94,29 @@ jobs:
         uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - name: Install Rust stable
+      - name: Install stable Rust
         shell: pwsh
         run: |
           rustup update stable
           rustup default stable
-      - name: Test project
+      - name: Run tests
         run: cargo test --all-targets
-      - name: Compile release executable
+      - name: Compile release binaries
         run: cargo build --release
-      - name: Smoke test 128 balances and 257 total bets
+      - name: Smoke-test Windows package generation
         shell: pwsh
         run: |
-          .\target\release\rng-grid.exe --total-spins 257 --summary-only --csv report.csv
-          $rows = @(Import-Csv .\report.csv)
-          if ($rows.Count -ne 128) { throw "Expected 128 wallets, got $($rows.Count)" }
-          $count = ($rows | Measure-Object -Property spins -Sum).Sum
-          if ($count -ne 257) { throw "Expected 257 bets, got $count" }
-      - name: Validate Windows GUI script and initialize Windows Forms
+          .\target\release\rng-grid.exe --packages 3 --out smoke --compact
+          if ($LASTEXITCODE -ne 0) { throw "Rust CLI failed" }
+          $catalog = Get-Content .\smoke\catalogo_128.json -Raw | ConvertFrom-Json
+          if ($catalog.outcomes.Count -ne 128) { throw "Expected 128 outcomes" }
+          $packages = @(Get-Content .\smoke\paquetes.jsonl | ForEach-Object { $_ | ConvertFrom-Json })
+          if ($packages.Count -ne 3) { throw "Expected 3 packages" }
+          foreach ($package in $packages) {
+            if ($package.outcome_ids.Count -ne 100) { throw "Package has a count different from 100" }
+            if (@($package.outcome_ids | Select-Object -Unique).Count -ne 100) { throw "Repeated ID in same batch" }
+          }
+      - name: Validate Windows Forms parser and form construction
         shell: pwsh
         run: |
           Copy-Item target\release\rng-grid.exe .\RNG-6x6-CLI.exe
@@ -74,46 +127,42 @@ jobs:
             [ref]$tokens,
             [ref]$errors
           ) | Out-Null
-          if (@($errors).Count -gt 0) {
+          if (@($errors).Count -ne 0) {
             $errors | ForEach-Object { Write-Error $_.ToString() }
-            throw "Invalid PowerShell syntax"
+            throw "Invalid GUI PowerShell syntax"
           }
           $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File .\RNG-6x6-GUI.ps1 -SelfTest
           if ($LASTEXITCODE -ne 0 -or $output -notcontains 'GUI_SELF_TEST_OK') {
-            throw "GUI self-test failed: $output"
+            throw "GUI lightweight self-test failed: $output"
           }
-          $env:RNG_GUI_TEST_FORM = '1'
-          $stdoutPath = Join-Path $env:RUNNER_TEMP 'rng-gui-form-stdout.txt'
-          $stderrPath = Join-Path $env:RUNNER_TEMP 'rng-gui-form-stderr.txt'
-          $proc = Start-Process -FilePath powershell.exe -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-STA', '-File', '.\RNG-6x6-GUI.ps1') -WorkingDirectory $PWD.Path -WindowStyle Hidden -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -PassThru
-          if (-not $proc.WaitForExit(12000)) {
+          $stdoutPath = Join-Path $env:RUNNER_TEMP 'rng-ui-test-out.txt'
+          $stderrPath = Join-Path $env:RUNNER_TEMP 'rng-ui-test-err.txt'
+          $proc = Start-Process -FilePath powershell.exe -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-STA','-File','.\RNG-6x6-GUI.ps1','-TestForm') -WorkingDirectory $PWD.Path -WindowStyle Hidden -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -PassThru
+          if (-not $proc.WaitForExit(20000)) {
             $proc.Kill()
-            $startupLog = Join-Path $env:TEMP 'RNG-GUI-startup.log'
-            $markers = if (Test-Path $startupLog) { Get-Content $startupLog -Raw } else { '(no startup log)' }
-            $stderr = if (Test-Path $stderrPath) { Get-Content $stderrPath -Raw } else { '(no stderr)' }
-            throw "GUI control-construction test timed out after markers: $markers / Errors: $stderr"
+            throw "GUI form-construction self-test timed out"
           }
-          $formOutput = Get-Content $stdoutPath -Raw
-          $formErrors = Get-Content $stderrPath -Raw
-          if ($proc.ExitCode -ne 0 -or $formOutput -notmatch 'GUI_FORM_CREATED_OK') {
-            throw "GUI control-construction test failed: $formOutput $formErrors"
+          $log = Get-Content $stdoutPath -Raw
+          $err = Get-Content $stderrPath -Raw
+          if ($proc.ExitCode -ne 0 -or $log -notmatch 'GUI_FORM_CREATED_OK') {
+            throw "GUI form construction failed: $log $err"
           }
-      - name: Prepare portable Windows folder
+      - name: Build Windows distributable ZIP folder
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item target\release\rng-grid.exe dist\RNG-6x6-CLI.exe
           Copy-Item target\release\windows_gui.exe dist\RNG-6x6.exe
+          Copy-Item target\release\rng-grid.exe dist\RNG-6x6-CLI.exe
           Copy-Item RNG-6x6-GUI.ps1 dist\RNG-6x6-GUI.ps1
           Copy-Item INICIAR-WINDOWS.cmd dist\INICIAR-WINDOWS.cmd
           Copy-Item DIAGNOSTICO-WINDOWS.cmd dist\DIAGNOSTICO-WINDOWS.cmd
           Copy-Item README.md dist\README.md
-          if ((Get-Item dist\RNG-6x6.exe).Length -lt 1024) { throw "Invalid GUI executable" }
-          if ((Get-Item dist\RNG-6x6-CLI.exe).Length -lt 1024) { throw "Invalid CLI executable" }
-      - name: Publish Windows executable artifact
+          if ((Get-Item dist\RNG-6x6.exe).Length -lt 1024) { throw "Invalid launcher" }
+          if ((Get-Item dist\RNG-6x6-CLI.exe).Length -lt 1024) { throw "Invalid CLI binary" }
+      - name: Publish Windows portable ZIP
         uses: actions/upload-artifact@v7
         with:
-          name: RNG-6x6-Windows-GUI-x64
+          name: RNG-6x6-Paquetes-Windows-x64
           path: dist/
-          if-no-files-found: error
           retention-days: 30
+          if-no-files-found: error
